@@ -1,10 +1,10 @@
-# NLGEP AI Minimal
+# Render AI
 
-A deliberately minimal AI web app with exactly three model choices and optional Tavily web search.
+A minimal AI web app with three model choices,Chat Gpt 4.0,Gemini-3.8-flash,and Openrouter. It also has an optional Tavily web search. It is designed to run on Render Free trial.
 
 ## Models
 
-- Groq — `openai/gpt-oss-120b`
+- Groq — `openai GPT 4.0`
 - Gemini — `gemini-3.8-flash`
 - OpenRouter — `openrouter/free`
 
@@ -14,8 +14,6 @@ A deliberately minimal AI web app with exactly three model choices and optional 
 `GEMINI_API_KEY`
 `OPENROUTER_API_KEY`
 `TAVILY_API_KEY`
-
-No Supabase, social chat, accounts, sessions, attachments, voice, image generation, or local chat history is included.
 
 ## Run locally
 
