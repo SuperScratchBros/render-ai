@@ -13,7 +13,7 @@ BASE_DIR = Path(__file__).parent
 
 MODELS = {
     "groq": {
-        "label": "Groq — GPT-OSS 120B",
+        "label": "Groq — OpenAI - ChatGPT 4.0",
         "model": os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"),
         "url": "https://api.groq.com/openai/v1/chat/completions",
         "key": "GROQ_API_KEY",
@@ -25,7 +25,7 @@ MODELS = {
         "key": "GEMINI_API_KEY",
     },
     "openrouter": {
-        "label": "OpenRouter — Free Router",
+        "label": "Mixed AI — Dot",
         "model": os.getenv("OPENROUTER_MODEL", "openrouter/free"),
         "url": "https://openrouter.ai/api/v1/chat/completions",
         "key": "OPENROUTER_API_KEY",
