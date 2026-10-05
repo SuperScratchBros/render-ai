@@ -3,3 +3,4 @@ uvicorn
 httpx
 tavily-python
 python-multipart
+pydantic
