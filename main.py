@@ -345,7 +345,7 @@ def usage(response: Response, render_ai_user: str | None = Cookie(default=None, 
 
 
 @app.post("/api/ask")
-def ask(body: AskRequest, response: Response, render_ai_user: str | None = Cookie(default=None)):
+def ask(body: AskRequest, response: Response, render_ai_user: str | None = Cookie(default=None, alias="__Host-render_ai_user")):
     require_supabase()
     if body.model not in MODELS:
         raise HTTPException(400, "You must choose a model before chatting.")
