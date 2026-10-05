@@ -29,6 +29,8 @@ APP_SECRET_KEY = os.getenv("APP_SECRET_KEY", "").strip()
 tavily = TavilyClient(api_key=TAVILY_API_KEY) if TAVILY_API_KEY else None
 app = FastAPI(title="Render AI")
 
+IS_SECURE = os.getenv("ENVIRONMENT", "").lower() in {"production", "render"} or os.getenv("SECURE_COOKIES", "false").lower() == "true"
+
 
 class AskRequest(BaseModel):
     model: str = Field(min_length=1)
@@ -51,11 +53,13 @@ def clean_key(value: str) -> str:
         value = value[1:-1].strip()
     return value
 
+
 def signed_user_cookie(user_id):
     if not APP_SECRET_KEY:
         raise HTTPException(503, "APP_SECRET_KEY is not configured.")
     signature = hmac.new(APP_SECRET_KEY.encode(), user_id.encode(), hashlib.sha256).hexdigest()
     return f"{user_id}.{signature}"
+
 
 def verified_user_id(cookie):
     if not APP_SECRET_KEY:
@@ -195,7 +199,12 @@ def search_web(query, deep=False):
         if not EXA_API_KEY:
             raise HTTPException(503, "Exa is not configured. Add EXA_API_KEY.")
         try:
-            r = httpx.post("https://api.exa.ai/search", headers={"x-api-key": EXA_API_KEY, "Content-Type": "application/json"}, json={"query": query, "type": "auto", "contents": {"highlights": {"maxCharacters": 1200}}}, timeout=45)
+            r = httpx.post(
+                "https://api.exa.ai/search",
+                headers={"x-api-key": EXA_API_KEY, "Content-Type": "application/json"},
+                json={"query": query, "type": "auto", "contents": {"highlights": {"maxHighlightsPerPage": 3}}},
+                timeout=30,
+            )
         except httpx.HTTPError as exc:
             raise HTTPException(502, "Exa search failed.") from exc
         if r.status_code == 429:
@@ -231,7 +240,7 @@ def search_web(query, deep=False):
 def build_messages(prompt, context, mode, history):
     system = f"You are Render AI. Today is {date.today().isoformat()}. Mode: {mode}. Give accurate, useful answers."
     if mode == "code":
-        system += " You are in Write Code mode. Produce production-quality code. Think through edge cases, include tests when useful, and clearly separate code from explanation. Never claim code was executed unless an execution result is provided."
+        system += " You are in Write Code mode. Produce production-quality code. Think through edge cases, include tests when useful, and clearly separate code from explanation. Never claim code is optimized without reason."
     if mode == "deep-think":
         system += " Carefully analyze the problem internally and provide a strong, concise conclusion."
     if mode in {"fast-search", "deep-search"}:
@@ -296,7 +305,7 @@ def ask_with_fallback(provider, prompt, context, mode, history, user_id):
             return candidate, text
         except HTTPException as exc:
             last_error = exc
-            if exc.status_code not in {429, 502}:
+            if exc.status_code not in {429, 502, 503}:
                 raise
     if last_error:
         raise last_error
@@ -335,7 +344,7 @@ def usage(response: Response, render_ai_user: str | None = Cookie(default=None, 
     require_supabase()
     uid = user_id_from_cookie(render_ai_user)
     ensure_render_user(uid)
-    response.set_cookie("__Host-render_ai_user", signed_user_cookie(uid), max_age=31536000, httponly=True, samesite="strict", secure=True, path="/")
+    response.set_cookie("__Host-render_ai_user", signed_user_cookie(uid), max_age=31536000, httponly=True, samesite="strict", secure=IS_SECURE, path="/")
     providers = {}
     for provider in DEFAULT_LIMITS:
         today, month, active, user_today = usage_counts(uid, provider)
@@ -351,7 +360,7 @@ def ask(body: AskRequest, response: Response, render_ai_user: str | None = Cooki
         raise HTTPException(400, "You must choose a model before chatting.")
     uid = user_id_from_cookie(render_ai_user)
     ensure_render_user(uid)
-    response.set_cookie("__Host-render_ai_user", signed_user_cookie(uid), max_age=31536000, httponly=True, samesite="strict", secure=True, path="/")
+    response.set_cookie("__Host-render_ai_user", signed_user_cookie(uid), max_age=31536000, httponly=True, samesite="strict", secure=IS_SECURE, path="/")
     ai_provider = "groq" if body.mode == "code" else body.model
     search_provider = "tavily" if body.mode == "fast-search" else "exa" if body.mode == "deep-search" else None
     if search_provider:
@@ -373,7 +382,7 @@ def ask_stream(body: AskRequest, response: Response, render_ai_user: str | None 
         raise HTTPException(400, "You must choose a model before chatting.")
     uid = user_id_from_cookie(render_ai_user)
     ensure_render_user(uid)
-    response.set_cookie("__Host-render_ai_user", signed_user_cookie(uid), max_age=31536000, httponly=True, samesite="strict", secure=True, path="/")
+    response.set_cookie("__Host-render_ai_user", signed_user_cookie(uid), max_age=31536000, httponly=True, samesite="strict", secure=IS_SECURE, path="/")
     ai_provider = "groq" if body.mode == "code" else body.model
     search_provider = "tavily" if body.mode == "fast-search" else "exa" if body.mode == "deep-search" else None
     if search_provider:
@@ -386,13 +395,20 @@ def ask_stream(body: AskRequest, response: Response, render_ai_user: str | None 
     key = clean_key(os.getenv(cfg["key"], ""))
     if not key:
         raise HTTPException(503, f"{cfg['label']} is not configured. Add {cfg['key']}.")
+
     headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
     if ai_provider == "openrouter":
         site = os.getenv("OPENROUTER_SITE_URL", "").strip()
         if site:
             headers["HTTP-Referer"] = site
         headers["X-Title"] = os.getenv("OPENROUTER_APP_NAME", "Render AI")
-    payload = {"model": cfg["model"], "messages": build_messages(body.prompt, context, body.mode, body.history), "max_tokens": 3000, "stream": True}
+
+    payload = {
+        "model": cfg["model"],
+        "messages": build_messages(body.prompt, context, body.mode, body.history),
+        "max_tokens": 3000,
+        "stream": True,
+    }
     if ai_provider == "groq" and body.mode == "deep-think":
         payload["reasoning_effort"] = "high"
 
@@ -401,16 +417,22 @@ def ask_stream(body: AskRequest, response: Response, render_ai_user: str | None 
         try:
             with httpx.stream("POST", cfg["url"], headers=headers, json=payload, timeout=90) as r:
                 if r.status_code != 200:
-                    if r.status_code in {429, 502}:
-                        actual_provider, fallback_text = ask_with_fallback(ai_provider, body.prompt, context, body.mode, body.history, uid)
-                        record_usage(uid, actual_provider, body.mode, MODELS[actual_provider]["model"])
-                        if search_provider:
-                            record_usage(uid, search_provider, body.mode, search_provider)
-                        yield f"data: {json.dumps({'type':'fallback','provider':actual_provider,'text':fallback_text,'sources':sources})}\n\n"
+                    if r.status_code in {429, 502, 503}:
+                        try:
+                            actual_provider, fallback_text = ask_with_fallback(ai_provider, body.prompt, context, body.mode, body.history, uid)
+                            record_usage(uid, actual_provider, body.mode, MODELS[actual_provider]["model"])
+                            if search_provider:
+                                record_usage(uid, search_provider, body.mode, search_provider)
+                            yield f"data: {json.dumps({'type':'fallback','provider':actual_provider,'text':fallback_text,'sources':sources})}\n\n"
+                        except HTTPException as e:
+                            yield f"data: {json.dumps({'type':'error','error':e.detail})}\n\n"
                         yield "data: [DONE]\n\n"
                         return
-                    yield f"data: {json.dumps({'type':'error','error':'The selected AI provider returned an error.'})}\n\n"
+
+                    yield f"data: {json.dumps({'type':'error','error':'The selected AI provider returned an error (status ' + str(r.status_code) + ').'})}\n\n"
+                    yield "data: [DONE]\n\n"
                     return
+
                 for line in r.iter_lines():
                     if not line or not line.startswith("data:"):
                         continue
@@ -428,14 +450,23 @@ def ask_stream(body: AskRequest, response: Response, render_ai_user: str | None 
                     if delta:
                         collected.append(delta)
                         yield f"data: {json.dumps({'type':'token','text':delta})}\n\n"
-        except httpx.HTTPError:
-            actual_provider, fallback_text = ask_with_fallback(ai_provider, body.prompt, context, body.mode, body.history, uid)
-            yield f"data: {json.dumps({'type':'fallback','provider':actual_provider,'text':fallback_text,'sources':sources})}\n\n"
-            record_usage(uid, actual_provider, body.mode, MODELS[actual_provider]["model"])
-            if search_provider:
-                record_usage(uid, search_provider, body.mode, search_provider)
+
+        except httpx.HTTPError as e:
+            try:
+                actual_provider, fallback_text = ask_with_fallback(ai_provider, body.prompt, context, body.mode, body.history, uid)
+                yield f"data: {json.dumps({'type':'fallback','provider':actual_provider,'text':fallback_text,'sources':sources})}\n\n"
+                record_usage(uid, actual_provider, body.mode, MODELS[actual_provider]["model"])
+                if search_provider:
+                    record_usage(uid, search_provider, body.mode, search_provider)
+            except HTTPException as err:
+                yield f"data: {json.dumps({'type':'error','error':err.detail})}\n\n"
             yield "data: [DONE]\n\n"
             return
+        except Exception as e:
+            yield f"data: {json.dumps({'type':'error','error':'Unexpected server error: ' + str(e)})}\n\n"
+            yield "data: [DONE]\n\n"
+            return
+
         answer = "".join(collected)
         if answer.strip():
             record_usage(uid, ai_provider, body.mode, cfg["model"])
@@ -445,7 +476,6 @@ def ask_stream(body: AskRequest, response: Response, render_ai_user: str | None 
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(generate(), media_type="text/event-stream", headers={"Cache-Control":"no-cache","X-Accel-Buffering":"no"})
-
 
 
 @app.post("/api/chat/login")
@@ -475,7 +505,7 @@ def chat_login(body: ChatLoginRequest, response: Response):
     r = supabase_request("POST", "chat_sessions", json={"session_id": session_id, "user_id": user["user_id"], "username": user["username"], "expires_at": expires.isoformat(), "last_seen": datetime.now(timezone.utc).isoformat()}, prefer="return=minimal")
     if r.status_code >= 300:
         raise HTTPException(503, "Could not create your chat session.")
-    response.set_cookie("nlgep_chat_session", session_id, max_age=7 * 86400, httponly=True, samesite="lax", secure=True)
+    response.set_cookie("nlgep_chat_session", session_id, max_age=7 * 86400, httponly=True, samesite="lax", secure=IS_SECURE)
     return {"username": user["username"]}
 
 
