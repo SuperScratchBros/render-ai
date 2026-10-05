@@ -90,7 +90,7 @@ def require_supabase():
 
 def supabase_count(table, filters):
     require_supabase()
-    query = "&".join(f"{key}=eq.{value}" for key, value in filters.items())
+    query = "&".join(f"{key}={value}" if str(value).startswith(("eq.", "gte.", "lte.", "gt.", "lt.")) else f"{key}=eq.{value}" for key, value in filters.items())
     try:
         r = supabase_request("GET", f"{table}?select=id&{query}&limit=1", prefer="count=exact")
     except HTTPException:
