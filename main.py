@@ -350,7 +350,7 @@ def send_chat_message(body: ChatMessageRequest, nlgep_chat_session: str | None =
     return {"message": r.json()[0] if r.json() else None}
 
 
-app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
+STATIC_DIR = BASE_DIR / "static"\nif STATIC_DIR.is_dir():\n    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
 @app.get("/")
