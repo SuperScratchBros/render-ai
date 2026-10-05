@@ -17,7 +17,9 @@ services:
         sync: false
       - key: EXA_API_KEY
         sync: false
-      - key: PIXAZO_API_KEY
+      - key: CLOUDFLARE_API_TOKEN
+        sync: false
+      - key: CLOUDFLARE_ACCOUNT_ID
         sync: false
       - key: UPSTASH_BLOB_TOKEN
         sync: false
@@ -56,13 +58,11 @@ services:
       - key: PYTHON_VERSION
         value: 3.12.3
 
-      - key: PIXAZO_DAILY_LIMIT
+      - key: CLOUDFLARE_DAILY_LIMIT
         value: "100"
-      - key: PIXAZO_MONTHLY_LIMIT
-        value: "2500"
-      - key: PIXAZO_IMAGE_ENDPOINT
-        value: https://gateway.pixazo.ai/flux-2-klein-4b/v1/generateImage
-      - key: PIXAZO_IMAGE_MODEL
-        value: flux-2-klein-4b
+      - key: CLOUDFLARE_MONTHLY_LIMIT
+        value: "3000"
+      - key: CLOUDFLARE_IMAGE_MODEL
+        value: "@cf/black-forest-labs/flux-1-schnell"
       - key: BLOB_MAX_FILE_SIZE
         value: "26214400"
