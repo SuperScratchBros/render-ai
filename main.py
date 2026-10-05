@@ -25,7 +25,9 @@ MODELS = {
 }
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "").strip()
 EXA_API_KEY = os.getenv("EXA_API_KEY", "").strip()
-PIXAZO_API_KEY = os.getenv("PIXAZO_API_KEY", "").strip()
+CLOUDFLARE_API_TOKEN = os.getenv("CLOUDFLARE_API_TOKEN", "").strip()
+CLOUDFLARE_ACCOUNT_ID = os.getenv("CLOUDFLARE_ACCOUNT_ID", "").strip()
+CLOUDFLARE_IMAGE_MODEL = os.getenv("CLOUDFLARE_IMAGE_MODEL", "@cf/black-forest-labs/flux-1-schnell").strip()
 UPSTASH_BLOB_TOKEN = os.getenv("UPSTASH_BLOB_TOKEN", "").strip()
 BLOB_MAX_FILE_SIZE = max(1, int(os.getenv("BLOB_MAX_FILE_SIZE", str(25 * 1024 * 1024)))) if os.getenv("BLOB_MAX_FILE_SIZE", "").strip().isdigit() else 25 * 1024 * 1024
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip().rstrip("/")
@@ -89,7 +91,7 @@ def env_int(name, default):
         return default
 
 
-DEFAULT_LIMITS = {"groq": (1000, 30000), "gemini": (20, 600), "openrouter": (50, 1500), "tavily": (100, 1000), "exa": (25, 833), "pixazo": (100, 2500)}
+DEFAULT_LIMITS = {"groq": (1000, 30000), "gemini": (20, 600), "openrouter": (50, 1500), "tavily": (100, 1000), "exa": (25, 833), "cloudflare": (100, 3000)}
 
 
 def safe_blob_filename(filename):
@@ -464,64 +466,51 @@ PIXAZO_IMAGE_ENDPOINT = os.getenv(
 PIXAZO_IMAGE_MODEL = os.getenv("PIXAZO_IMAGE_MODEL", "flux-2-klein-4b").strip()
 
 
-def generate_pixazo_image(prompt, user_id):
-    if not PIXAZO_API_KEY:
-        raise HTTPException(503, "Pixazo is not configured. Add PIXAZO_API_KEY.")
-    check_quota(user_id, "pixazo")
+def generate_cloudflare_image(prompt, user_id):
+    if not CLOUDFLARE_API_TOKEN or not CLOUDFLARE_ACCOUNT_ID:
+        raise HTTPException(503, "Cloudflare Workers AI is not configured. Add CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID.")
+    check_quota(user_id, "cloudflare")
 
-    payload = {
-        "prompt": prompt,
-        "steps": 25,
-        "width": 1024,
-        "height": 1024,
-    }
+    endpoint = f"https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai/run/{CLOUDFLARE_IMAGE_MODEL}"
+    payload = {"prompt": prompt, "steps": 4}
+
     try:
         r = httpx.post(
-            PIXAZO_IMAGE_ENDPOINT,
+            endpoint,
             headers={
+                "Authorization": f"Bearer {CLOUDFLARE_API_TOKEN}",
                 "Content-Type": "application/json",
-                "Cache-Control": "no-cache",
-                "Ocp-Apim-Subscription-Key": PIXAZO_API_KEY,
             },
             json=payload,
             timeout=120,
         )
     except httpx.HTTPError as exc:
-        raise HTTPException(502, "Pixazo image generation failed: the Pixazo API could not be reached.") from exc
+        raise HTTPException(502, "Cloudflare image generation failed: the Workers AI API could not be reached.") from exc
 
     if r.status_code == 401:
-        raise HTTPException(502, "Pixazo rejected the API key (HTTP 401). Check PIXAZO_API_KEY in Render.")
+        raise HTTPException(502, "Cloudflare rejected the API token (HTTP 401). Check CLOUDFLARE_API_TOKEN in Render.")
     if r.status_code == 403:
-        raise HTTPException(502, "Pixazo denied this API request (HTTP 403). Check that the API key has image-generation access.")
-    if r.status_code == 402:
-        raise HTTPException(402, "Pixazo reported insufficient balance.")
+        raise HTTPException(502, "Cloudflare denied the Workers AI request (HTTP 403). Check the token has Workers AI Read/Write permissions.")
     if r.status_code == 429:
-        raise HTTPException(429, "Pixazo is rate-limited right now.")
-    if r.status_code == 404:
-        raise HTTPException(
-            502,
-            f"Pixazo image endpoint was not found (HTTP 404). Current endpoint: {PIXAZO_IMAGE_ENDPOINT}. "
-            "Check PIXAZO_IMAGE_ENDPOINT or the image model enabled for your Pixazo account."
-        )
+        raise HTTPException(429, "Cloudflare Workers AI is rate-limited right now.")
     if r.status_code < 200 or r.status_code >= 300:
         detail = (r.text or "").strip()
-        if len(detail) > 500:
-            detail = detail[:500] + "..."
-        raise HTTPException(502, f"Pixazo image generation failed (HTTP {r.status_code}). {detail or 'Pixazo returned no error details.'}")
+        if len(detail) > 700:
+            detail = detail[:700] + "..."
+        raise HTTPException(502, f"Cloudflare image generation failed (HTTP {r.status_code}). {detail or 'Cloudflare returned no error details.'}")
 
     try:
         data = r.json()
-    except ValueError as exc:
-        raise HTTPException(502, "Pixazo returned an invalid JSON response.") from exc
+        image_b64 = ((data.get("result") or {}).get("image"))
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(502, "Cloudflare returned an invalid image response.") from exc
 
-    media_url = extract_media_url(data)
-    if not media_url:
+    if not isinstance(image_b64, str) or not image_b64.strip():
         detail = json.dumps(data, ensure_ascii=False)[:900]
-        raise HTTPException(502, f"Pixazo completed the request but returned no image URL. Response: {detail}")
+        raise HTTPException(502, f"Cloudflare completed the request but returned no image data. Response: {detail}")
 
-    record_usage(user_id, "pixazo", "image", PIXAZO_IMAGE_MODEL, 1)
-    return {"url": media_url, "model": PIXAZO_IMAGE_MODEL}
-
+    record_usage(user_id, "cloudflare", "image", CLOUDFLARE_IMAGE_MODEL, 1)
+    return {"url": f"data:image/png;base64,{image_b64}", "model": CLOUDFLARE_IMAGE_MODEL}
 
 def get_chat_session(session_id):
     if not session_id:
@@ -546,7 +535,7 @@ def health():
 def config():
     return {
         "models": [{"id": k, "label": v["label"], "configured": bool(clean_key(os.getenv(v["key"], "")))} for k, v in MODELS.items()],
-        "features": {"fast_search": bool(TAVILY_API_KEY), "deep_search": bool(EXA_API_KEY), "code": bool(clean_key(os.getenv("GROQ_API_KEY", ""))), "deep_think": True, "image": bool(PIXAZO_API_KEY)}
+        "features": {"fast_search": bool(TAVILY_API_KEY), "deep_search": bool(EXA_API_KEY), "code": bool(clean_key(os.getenv("GROQ_API_KEY", ""))), "deep_think": True, "image": bool(CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID)}
     }
 
 
@@ -566,7 +555,7 @@ def global_usage():
             "monthly_remaining": max(0, monthly - month),
             "active_users": active,
         }
-    return {"providers": providers, "note": "These are Render AI tracked requests across all users. Pixazo's real account balance is managed by Pixazo and is not exposed by this endpoint."}
+    return {"providers": providers, "note": "These are Render AI tracked requests across all users. Cloudflare Workers AI billing/quota is managed by Cloudflare; these counters are only the app's tracked requests."}
 
 
 @app.get("/api/usage")
@@ -672,8 +661,8 @@ def image_generate(body: AskRequest, response: Response, render_ai_user: str | N
     uid = user_id_from_cookie(render_ai_user)
     ensure_render_user(uid)
     response.set_cookie("__Host-render_ai_user", signed_user_cookie(uid), max_age=31536000, httponly=True, samesite="strict", secure=IS_SECURE, path="/")
-    result = generate_pixazo_image(body.prompt, uid)
-    return {"answer": "Generated image", "image": result["url"], "provider": "pixazo", "model": result["model"]}
+    result = generate_cloudflare_image(body.prompt, uid)
+    return {"answer": "Generated image", "image": result["url"], "provider": "cloudflare", "model": result["model"]}
 
 
 @app.post("/api/ask")
