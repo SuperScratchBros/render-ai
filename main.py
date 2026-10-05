@@ -163,7 +163,6 @@ def usage(render_ai_user:str|None=Cookie(default=None)):
 def ask(body:AskRequest,response:Response,render_ai_user:str|None=Cookie(default=None)):
     if body.model not in MODELS:raise HTTPException(400,"You must choose a model before chatting.")
     uid=user_id_from_cookie(render_ai_user);ensure_user(uid);response.set_cookie("render_ai_user",uid,max_age=31536000,httponly=True,samesite="lax",secure=False)
-    # Model choice is mandatory, while Write Code always uses the shared Groq pool as requested.
     ai_provider="groq" if body.mode=="code" else body.model
     search_provider="tavily" if body.mode=="fast-search" else "exa" if body.mode=="deep-search" else None
     check_quota(uid,ai_provider)
