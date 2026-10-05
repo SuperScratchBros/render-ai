@@ -44,9 +44,9 @@ async function ask(){
    while(true){
      const {value,done}=await reader.read();if(done)break;
      buffer+=decoder.decode(value,{stream:true});
-     const events=buffer.split('\\n\\n');buffer=events.pop()||'';
+     const events=buffer.split('\n\n');buffer=events.pop()||'';
      for(const event of events){
-       for(const line of event.split('\\n')){
+       for(const line of event.split('\n')){
          if(!line.startsWith('data: '))continue;
          const raw=line.slice(6);if(raw==='[DONE]')continue;
          let d;try{d=JSON.parse(raw)}catch(e){continue}
