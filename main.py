@@ -459,14 +459,9 @@ def extract_media_url(value):
     return None
 
 
-PIXAZO_IMAGE_ENDPOINT = os.getenv(
-    "PIXAZO_IMAGE_ENDPOINT",
-    "https://gateway.pixazo.ai/flux-2-klein-4b/v1/generateImage",
-).strip()
-PIXAZO_IMAGE_MODEL = os.getenv("PIXAZO_IMAGE_MODEL", "flux-2-klein-4b").strip()
-
-
 def generate_cloudflare_image(prompt, user_id):
+    if len(prompt) > 2048:
+        raise HTTPException(400, "Image prompts can be at most 2048 characters for the selected Cloudflare model.")
     if not CLOUDFLARE_API_TOKEN or not CLOUDFLARE_ACCOUNT_ID:
         raise HTTPException(503, "Cloudflare Workers AI is not configured. Add CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID.")
     check_quota(user_id, "cloudflare")
@@ -510,7 +505,7 @@ def generate_cloudflare_image(prompt, user_id):
         raise HTTPException(502, f"Cloudflare completed the request but returned no image data. Response: {detail}")
 
     record_usage(user_id, "cloudflare", "image", CLOUDFLARE_IMAGE_MODEL, 1)
-    return {"url": f"data:image/png;base64,{image_b64}", "model": CLOUDFLARE_IMAGE_MODEL}
+    return {"url": f"data:image/jpeg;base64,{image_b64}", "model": CLOUDFLARE_IMAGE_MODEL}
 
 def get_chat_session(session_id):
     if not session_id:
