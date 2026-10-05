@@ -15,5 +15,7 @@ services:
         sync: false
       - key: TAVILY_API_KEY
         sync: false
+      - key: EXA_API_KEY
+        sync: false
       - key: PYTHON_VERSION
         value: 3.12.3
