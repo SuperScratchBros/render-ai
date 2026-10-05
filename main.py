@@ -1,4 +1,6 @@
 import calendar
+import hashlib
+import hmac
 import os
 import secrets
 import uuid
@@ -22,6 +24,7 @@ TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "").strip()
 EXA_API_KEY = os.getenv("EXA_API_KEY", "").strip()
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip().rstrip("/")
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip()
+APP_SECRET_KEY = os.getenv("APP_SECRET_KEY", "").strip()
 tavily = TavilyClient(api_key=TAVILY_API_KEY) if TAVILY_API_KEY else None
 app = FastAPI(title="Render AI")
 
@@ -45,6 +48,27 @@ def clean_key(value: str) -> str:
     if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
         value = value[1:-1].strip()
     return value
+
+def signed_user_cookie(user_id):
+    if not APP_SECRET_KEY:
+        raise HTTPException(503, "APP_SECRET_KEY is not configured.")
+    signature = hmac.new(APP_SECRET_KEY.encode(), user_id.encode(), hashlib.sha256).hexdigest()
+    return f"{user_id}.{signature}"
+
+def verified_user_id(cookie):
+    if not APP_SECRET_KEY:
+        raise HTTPException(503, "APP_SECRET_KEY is not configured.")
+    if not cookie or "." not in cookie:
+        return str(uuid.uuid4())
+    user_id, signature = cookie.rsplit(".", 1)
+    try:
+        uuid.UUID(user_id)
+    except ValueError:
+        return str(uuid.uuid4())
+    expected = hmac.new(APP_SECRET_KEY.encode(), user_id.encode(), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(signature, expected):
+        return str(uuid.uuid4())
+    return user_id
 
 
 def env_int(name, default):
@@ -161,7 +185,7 @@ def record_usage(user_id, provider, feature, model, units=1):
 
 
 def user_id_from_cookie(cookie):
-    return cookie if cookie and len(cookie) <= 128 else str(uuid.uuid4())
+    return verified_user_id(cookie)
 
 
 def search_web(query, deep=False):
@@ -178,7 +202,14 @@ def search_web(query, deep=False):
             raise HTTPException(502, "Exa search failed.")
         items = r.json().get("results", [])[:8]
         sources = [{"title": x.get("title") or x.get("url") or "Source", "url": x.get("url", "")} for x in items if x.get("url")]
-        return "\n\n".join(f"SOURCE: {x.get('title') or x.get('url')}\nURL: {x.get('url', '')}\n{x.get('highlight', '')}" for x in items)[:9000], sources
+        pieces = []
+        for item in items:
+            highlights = item.get("highlights") or []
+            if isinstance(highlights, str):
+                highlights = [highlights]
+            excerpt = "\n".join(str(h) for h in highlights[:3])
+            pieces.append(f"SOURCE: {item.get('title') or item.get('url')}\nURL: {item.get('url', '')}\n{excerpt}")
+        return "\n\n".join(pieces)[:9000], sources
     if not tavily:
         raise HTTPException(503, "Tavily is not configured. Add TAVILY_API_KEY.")
     try:
@@ -215,8 +246,11 @@ def ask_model(provider, prompt, context, mode):
         if site:
             headers["HTTP-Referer"] = site
         headers["X-Title"] = os.getenv("OPENROUTER_APP_NAME", "Render AI")
+    payload = {"model": cfg["model"], "messages": [{"role": "system", "content": system}, {"role": "user", "content": prompt}], "max_tokens": 3000}
+    if provider == "groq" and mode == "deep-think":
+        payload["reasoning_effort"] = "high"
     try:
-        r = httpx.post(cfg["url"], headers=headers, json={"model": cfg["model"], "messages": [{"role": "system", "content": system}, {"role": "user", "content": prompt}], "max_tokens": 3000}, timeout=90)
+        r = httpx.post(cfg["url"], headers=headers, json=payload, timeout=90)
     except httpx.HTTPError as exc:
         raise HTTPException(502, "AI request failed.") from exc
     if r.status_code == 429:
@@ -260,7 +294,7 @@ def config():
 
 
 @app.get("/api/usage")
-def usage(render_ai_user: str | None = Cookie(default=None)):
+def usage(render_ai_user: str | None = Cookie(default=None, alias="__Host-render_ai_user")):
     require_supabase()
     uid = user_id_from_cookie(render_ai_user)
     ensure_render_user(uid)
@@ -279,7 +313,7 @@ def ask(body: AskRequest, response: Response, render_ai_user: str | None = Cooki
         raise HTTPException(400, "You must choose a model before chatting.")
     uid = user_id_from_cookie(render_ai_user)
     ensure_render_user(uid)
-    response.set_cookie("render_ai_user", uid, max_age=31536000, httponly=True, samesite="lax", secure=True)
+    response.set_cookie("__Host-render_ai_user", signed_user_cookie(uid), max_age=31536000, httponly=True, samesite="strict", secure=True, path="/")
     ai_provider = "groq" if body.mode == "code" else body.model
     search_provider = "tavily" if body.mode == "fast-search" else "exa" if body.mode == "deep-search" else None
     check_quota(uid, ai_provider)
@@ -350,7 +384,9 @@ def send_chat_message(body: ChatMessageRequest, nlgep_chat_session: str | None =
     return {"message": r.json()[0] if r.json() else None}
 
 
-STATIC_DIR = BASE_DIR / "static"\nif STATIC_DIR.is_dir():\n    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+STATIC_DIR = BASE_DIR / "static"
+if STATIC_DIR.is_dir():
+    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
 @app.get("/")
