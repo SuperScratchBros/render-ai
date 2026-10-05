@@ -432,25 +432,44 @@ def generate_pixazo_image(prompt, user_id):
     try:
         r = httpx.post(
             "https://gateway.pixazo.ai/flux/text-to-image",
-            headers={"Content-Type": "application/json", "Cache-Control": "no-cache", "Ocp-Apim-Subscription-Key": PIXAZO_API_KEY},
+            headers={
+                "Content-Type": "application/json",
+                "Cache-Control": "no-cache",
+                "Ocp-Apim-Subscription-Key": PIXAZO_API_KEY,
+            },
             json={"prompt": prompt},
             timeout=90,
         )
     except httpx.HTTPError as exc:
-        raise HTTPException(502, "Pixazo image generation failed.") from exc
+        raise HTTPException(502, "Pixazo image generation failed: the Pixazo API could not be reached.") from exc
+
+    if r.status_code == 401:
+        raise HTTPException(502, "Pixazo rejected the API key (HTTP 401). Check PIXAZO_API_KEY in Render.")
+    if r.status_code == 403:
+        raise HTTPException(502, "Pixazo denied this API request (HTTP 403). Check that the Pixazo API key has image-generation access.")
     if r.status_code == 429:
         raise HTTPException(429, "Pixazo is rate-limited right now.")
     if r.status_code == 402:
         raise HTTPException(402, "Pixazo reported insufficient balance.")
-    if r.status_code != 200:
-        raise HTTPException(502, "Pixazo image generation failed.")
+    if r.status_code < 200 or r.status_code >= 300:
+        detail = (r.text or "").strip()
+        if len(detail) > 500:
+            detail = detail[:500] + "..."
+        raise HTTPException(
+            502,
+            f"Pixazo image generation failed (HTTP {r.status_code}). {detail or 'Pixazo returned no error details.'}"
+        )
+
     try:
         data = r.json()
     except ValueError as exc:
-        raise HTTPException(502, "Pixazo returned an invalid response.") from exc
+        raise HTTPException(502, "Pixazo returned an invalid JSON response.") from exc
+
     media_url = extract_media_url(data)
     if not media_url:
-        raise HTTPException(502, "Pixazo did not return an image URL.")
+        detail = json.dumps(data)[:700]
+        raise HTTPException(502, f"Pixazo completed the request but returned no image URL. Response: {detail}")
+
     record_usage(user_id, "pixazo", "image", "flux", 1)
     return {"url": media_url, "model": "Flux"}
 
