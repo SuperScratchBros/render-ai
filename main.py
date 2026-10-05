@@ -172,7 +172,8 @@ def supabase_count(table, filters):
     require_supabase()
     query = "&".join(f"{key}={value}" if str(value).startswith(("eq.", "gte.", "lte.", "gt.", "lt.")) else f"{key}=eq.{value}" for key, value in filters.items())
     try:
-        r = supabase_request("GET", f"{table}?select=*&{query}&limit=1", prefer="count=exact")
+        # HEAD + count=exact returns Content-Range without transferring row data.
+        r = supabase_request("HEAD", f"{table}?select=id&{query}&limit=1", prefer="count=exact")
     except HTTPException:
         raise
     if r.status_code >= 300:
@@ -183,8 +184,7 @@ def supabase_count(table, filters):
             return int(content_range.split("/")[-1])
         except ValueError:
             pass
-    return len(r.json()) if r.text else 0
-
+    return 0
 
 def ensure_render_user(user_id):
     now = datetime.now(timezone.utc).isoformat()
@@ -211,8 +211,7 @@ def usage_counts(user_id, provider):
     return today, month, active, user_today, user_month
 
 
-def adaptive_remaining(user_id, provider):
-    today, month, active, user_today, user_month = usage_counts(user_id, provider)
+def adaptive_remaining_from_counts(today, month, active, user_today, provider):
     daily, monthly = provider_limits(provider)
     now = date.today()
     days_left = calendar.monthrange(now.year, now.month)[1] - now.day + 1
@@ -221,6 +220,11 @@ def adaptive_remaining(user_id, provider):
     pool = min(max(0, daily - today), sustainable)
     fair = max(1, pool // active) if pool else 0
     return max(0, min(fair, pool - user_today))
+
+
+def adaptive_remaining(user_id, provider):
+    today, month, active, user_today, _ = usage_counts(user_id, provider)
+    return adaptive_remaining_from_counts(today, month, active, user_today, provider)
 
 
 def check_quota(user_id, provider, cost=1):
@@ -499,7 +503,7 @@ def usage(response: Response, render_ai_user: str | None = Cookie(default=None, 
     for provider in DEFAULT_LIMITS:
         today, month, active, user_today, user_month = usage_counts(uid, provider)
         daily, monthly = provider_limits(provider)
-        providers[provider] = {"today": today, "month": month, "daily_limit": daily, "monthly_limit": monthly, "user_today": user_today, "user_month": user_month, "user_daily_remaining": max(0, daily - user_today), "user_remaining": adaptive_remaining(uid, provider)}
+        providers[provider] = {"today": today, "month": month, "daily_limit": daily, "monthly_limit": monthly, "user_today": user_today, "user_month": user_month, "user_daily_remaining": max(0, daily - user_today), "user_remaining": adaptive_remaining_from_counts(today, month, active, user_today, provider)}
     return {"providers": providers}
 
 
