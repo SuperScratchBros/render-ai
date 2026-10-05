@@ -21,14 +21,49 @@
 <script>
 const modelsEl=document.getElementById('models'),prompt=document.getElementById('prompt'),send=document.getElementById('send'),status=document.getElementById('status'),answer=document.getElementById('answer'),sources=document.getElementById('sources'),quota=document.getElementById('quota');
 const username=document.getElementById('username'),login=document.getElementById('login'),chatLogin=document.getElementById('chatLogin'),chatArea=document.getElementById('chatArea'),chatWho=document.getElementById('chatWho'),chatList=document.getElementById('chatList'),chatInput=document.getElementById('chatInput'),chatSend=document.getElementById('chatSend'),chatStatus=document.getElementById('chatStatus');
-let selected='',mode='chat',config=null,chatReady=false;
+let selected='',mode='chat',config=null,chatReady=false,history=JSON.parse(localStorage.getItem('render-ai-history')||'[]');
 
+function saveHistory(){history=history.slice(-12);localStorage.setItem('render-ai-history',JSON.stringify(history))}
 function updateSend(){send.disabled=!selected||!prompt.value.trim()}
 function renderModels(){modelsEl.innerHTML='';config.models.forEach(m=>{const b=document.createElement('button');b.className='model';b.textContent=m.label+(m.configured?'':' (not configured)');b.disabled=!m.configured;b.onclick=()=>{selected=m.id;document.querySelectorAll('.model').forEach(x=>x.classList.remove('active'));b.classList.add('active');updateSend()};modelsEl.appendChild(b)})}
-function renderModes(){document.querySelectorAll('.mode').forEach(b=>{b.classList.toggle('active',b.dataset.mode===mode);b.onclick=()=>{if((b.dataset.mode==='fast-search'&&!config.features.fast_search)||(b.dataset.mode==='deep-search'&&!config.features.deep_search)||(b.dataset.mode==='code'&&!config.features.code))return;mode=b.dataset.mode;renderModes()}})}
+function renderModes(){document.querySelectorAll('.mode').forEach(b=>{const unavailable=(b.dataset.mode==='fast-search'&&!config.features.fast_search)||(b.dataset.mode==='deep-search'&&!config.features.deep_search)||(b.dataset.mode==='code'&&!config.features.code);b.disabled=unavailable;b.classList.toggle('active',b.dataset.mode===mode);b.onclick=()=>{if(b.disabled)return;mode=b.dataset.mode;renderModes()}})}
 async function loadUsage(){try{const r=await fetch('/api/usage',{cache:'no-store'});if(!r.ok)throw Error();const d=await r.json();const parts=[];for(const [p,v] of Object.entries(d.providers)){parts.push('<span class="pill">'+p+': '+Math.max(0,v.user_remaining)+' left</span>')}quota.innerHTML=parts.join('')}catch(e){quota.textContent='Usage unavailable'}}
 async function load(){const r=await fetch('/api/config',{cache:'no-store'});if(!r.ok)throw Error('Could not load configuration');config=await r.json();renderModels();renderModes();await loadUsage();await loadChat()}
-async function ask(){const p=prompt.value.trim();if(!selected||!p)return;send.disabled=true;status.textContent='Working…';status.className='status';answer.hidden=true;sources.innerHTML='';try{const r=await fetch('/api/ask',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:selected,prompt:p,mode})});const d=await r.json().catch(()=>({}));if(!r.ok)throw Error(d.detail||'Request failed');answer.textContent=d.answer||'';answer.hidden=false;(d.sources||[]).forEach(s=>{const a=document.createElement('a');a.href=s.url;a.target='_blank';a.rel='noopener noreferrer';a.textContent=s.title||s.url;sources.appendChild(a)});status.textContent='';await loadUsage()}catch(e){status.textContent='Error: '+e.message;status.className='status err'}finally{updateSend()}}
+
+function clearAnswer(){answer.hidden=false;answer.textContent='';sources.innerHTML=''}
+function addSource(s){if(!s.url)return;const a=document.createElement('a');a.href=s.url;a.target='_blank';a.rel='noopener noreferrer';a.textContent=s.title||s.url;sources.appendChild(a)}
+async function ask(){
+ const p=prompt.value.trim();if(!selected||!p)return;
+ send.disabled=true;status.textContent='Working…';status.className='status';clearAnswer();
+ const requestHistory=history.slice(-12);
+ history.push({role:'user',content:p});saveHistory();
+ try{
+   const r=await fetch('/api/ask/stream',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:selected,prompt:p,mode,history:requestHistory})});
+   if(!r.ok){const d=await r.json().catch(()=>({}));throw Error(d.detail||'Request failed')}
+   const reader=r.body.getReader(),decoder=new TextDecoder();let buffer='',full='';
+   while(true){
+     const {value,done}=await reader.read();if(done)break;
+     buffer+=decoder.decode(value,{stream:true});
+     const events=buffer.split('\\n\\n');buffer=events.pop()||'';
+     for(const event of events){
+       for(const line of event.split('\\n')){
+         if(!line.startsWith('data: '))continue;
+         const raw=line.slice(6);if(raw==='[DONE]')continue;
+         let d;try{d=JSON.parse(raw)}catch(e){continue}
+         if(d.type==='token'){full+=d.text;answer.textContent=full;answer.hidden=false}
+         if(d.type==='fallback'){full=d.text||'';answer.textContent=full;answer.hidden=false;(d.sources||[]).forEach(addSource)}
+         if(d.type==='done'){(d.sources||[]).forEach(addSource);status.textContent=d.provider?'Used '+d.provider:''}
+         if(d.type==='error')throw Error(d.error||'AI request failed')
+       }
+     }
+   }
+   if(full.trim()){history.push({role:'assistant',content:full});saveHistory()}
+   await loadUsage();
+ }catch(e){
+   history=requestHistory;saveHistory();status.textContent='Error: '+e.message;status.className='status err'
+ }finally{updateSend()}
+}
+
 function renderMessages(messages){chatList.innerHTML='';if(!messages.length){chatList.textContent='No messages yet. Be the first!';return}messages.forEach(m=>{const row=document.createElement('div');row.className='msg';const b=document.createElement('b');b.textContent=m.username;const small=document.createElement('small');small.textContent=new Date(m.created_at).toLocaleTimeString();const text=document.createElement('div');text.textContent=m.content;row.append(b,small,text);chatList.appendChild(row)});chatList.scrollTop=chatList.scrollHeight}
 async function loadChat(){try{const r=await fetch('/api/chat/me',{cache:'no-store'});if(!r.ok)return;const d=await r.json();chatReady=true;chatLogin.hidden=true;chatArea.hidden=false;chatWho.textContent='Signed in as '+d.username;await refreshChat()}catch(e){}}
 async function refreshChat(){if(!chatReady)return;try{const r=await fetch('/api/chat/messages',{cache:'no-store'});if(!r.ok){chatReady=false;return}const d=await r.json();renderMessages(d.messages||[])}catch(e){}}
