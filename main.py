@@ -455,6 +455,7 @@ def ask_stream(body: AskRequest, response: Response, render_ai_user: str | None 
                     if r.status_code in {429, 502, 503}:
                         try:
                             actual_provider, fallback_text = ask_with_fallback(ai_provider, body.prompt, context, body.mode, body.history, uid)
+                            print(f"[AI] stream fallback selected={ai_provider} used={actual_provider} model={MODELS[actual_provider]['model']} mode={body.mode}", flush=True)
                             record_usage(uid, actual_provider, body.mode, MODELS[actual_provider]["model"])
                             if search_provider:
                                 record_usage(uid, search_provider, body.mode, search_provider)
@@ -504,6 +505,7 @@ def ask_stream(body: AskRequest, response: Response, render_ai_user: str | None 
 
         answer = "".join(collected)
         if answer.strip():
+            print(f"[AI] stream selected={ai_provider} used={ai_provider} model={cfg['model']} mode={body.mode} fallback=False", flush=True)
             record_usage(uid, ai_provider, body.mode, cfg["model"])
             if search_provider:
                 record_usage(uid, search_provider, body.mode, search_provider)
