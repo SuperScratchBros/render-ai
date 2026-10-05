@@ -1,30 +1,20 @@
 <!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Render AI</title>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Render AI</title>
 <style>
-*{box-sizing:border-box}html,body{margin:0;min-height:100%;background:#fff;color:#000;font-family:Arial,sans-serif}
-body{display:flex;justify-content:center;padding:40px 16px}.app{width:min(760px,100%)}
-h1{margin:0 0 4px;font-size:28px}.sub{margin-bottom:24px}
-.controls{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}select,button,textarea{font:16px Arial,sans-serif;color:#000;background:#fff;border:1px solid #000;border-radius:2px}
-select,button{padding:9px 12px}button{cursor:pointer}.check{display:flex;align-items:center;gap:6px}
-textarea{width:100%;min-height:140px;padding:12px;resize:vertical;outline:none}textarea:focus,select:focus,button:focus{outline:2px solid #000;outline-offset:1px}
-.send{margin-top:8px;width:100%}.status{margin-top:12px;min-height:22px}.answer{white-space:pre-wrap;border:1px solid #000;padding:14px;margin-top:12px;min-height:100px}.sources{margin-top:12px}.sources a{display:block;color:#000;margin:5px 0}
-</style>
-</head>
-<body>
-<main class="app">
-<h1>Render AI</h1><div class="sub">Choose a model and ask a question.</div>
-<div class="controls"><select id="model" aria-label="Model"></select><label class="check"><input type="checkbox" id="web"> Tavily web search</label></div>
-<textarea id="prompt" placeholder="Ask anything..."></textarea><button class="send" id="send">Send</button>
-<div class="status" id="status"></div><div class="answer" id="answer" hidden></div><div class="sources" id="sources"></div>
+*{box-sizing:border-box}body{margin:0;background:#070909;color:#eaffea;font:15px Arial,sans-serif}main{width:min(900px,94%);margin:36px auto}.top{display:flex;justify-content:space-between;align-items:center;gap:16px}.brand{font-size:30px;font-weight:800}.sub{color:#91a591;margin:5px 0 24px}.panel{background:#101513;border:1px solid #263329;border-radius:14px;padding:16px;margin-bottom:14px;box-shadow:0 10px 30px #0005}.label{font-size:12px;color:#8fa28f;text-transform:uppercase;letter-spacing:.08em;margin-bottom:7px}.models{display:flex;gap:8px;flex-wrap:wrap}.model,.mode,.send{border:1px solid #334537;background:#151c17;color:#dfffe2;border-radius:9px;padding:10px 13px;cursor:pointer}.model.active,.mode.active{border-color:#32ff68;box-shadow:0 0 14px #32ff6830}.model:disabled,.mode:disabled{opacity:.4;cursor:not-allowed}textarea{width:100%;min-height:150px;resize:vertical;background:#0b0f0c;color:#effff0;border:1px solid #304034;border-radius:10px;padding:13px;outline:none}textarea:focus{border-color:#32ff68}.actions{display:flex;gap:8px;margin-top:9px}.send{flex:1;background:#18b84b;border-color:#18b84b;color:#041006;font-weight:800}.send:disabled{opacity:.5}.status{min-height:22px;color:#a9b9aa;margin:9px 2px}.answer{white-space:pre-wrap;line-height:1.55;background:#0b100d;border:1px solid #26372a;border-radius:10px;padding:15px;margin-top:10px}.sources a{display:block;color:#75ff9a;margin:7px 0}.quota{font-size:12px;color:#9fb0a0}.pill{display:inline-block;border:1px solid #304236;border-radius:999px;padding:4px 8px;margin:3px}.warn{color:#ffca7a}.err{color:#ff8d8d}@media(max-width:650px){.top{align-items:flex-start;flex-direction:column}.actions{flex-direction:column}}
+</style></head>
+<body><main>
+<div class="top"><div><div class="brand">Render AI</div><div class="sub">Choose a model before you chat. Search and reasoning modes are optional.</div></div><div id="quota" class="quota">Loading usage…</div></div>
+<section class="panel"><div class="label">Model — required</div><div id="models" class="models"></div></section>
+<section class="panel"><div class="label">Mode</div><div class="models"><button class="mode active" data-mode="chat">Chat</button><button class="mode" data-mode="fast-search">Fast Search</button><button class="mode" data-mode="deep-search">Deep Search</button><button class="mode" data-mode="code">Write Code</button><button class="mode" data-mode="deep-think">Deep Think</button></div></section>
+<section class="panel"><textarea id="prompt" placeholder="Choose a model, then ask anything…"></textarea><div class="actions"><button id="send" class="send" disabled>Send</button></div><div id="status" class="status"></div><div id="answer" class="answer" hidden></div><div id="sources" class="sources"></div></section>
 <script>
-const model=document.getElementById('model'),web=document.getElementById('web'),prompt=document.getElementById('prompt'),send=document.getElementById('send'),status=document.getElementById('status'),answer=document.getElementById('answer'),sources=document.getElementById('sources');
-async function load(){const r=await fetch('/api/config',{cache:'no-store'});const c=await r.json();model.innerHTML='';c.models.forEach(m=>{const o=document.createElement('option');o.value=m.id;o.textContent=m.label+(m.configured?'':' (not configured)');model.appendChild(o)});web.disabled=!c.tavily;if(!c.tavily)web.checked=false}
-async function ask(){const p=prompt.value.trim();if(!p)return;send.disabled=true;status.textContent='Thinking...';answer.hidden=true;sources.innerHTML='';try{const r=await fetch('/api/ask',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:model.value,prompt:p,web:web.checked})});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.detail||'Request failed');answer.textContent=d.answer;answer.hidden=false;d.sources.forEach(s=>{const a=document.createElement('a');a.href=s.url;a.target='_blank';a.rel='noopener noreferrer';a.textContent=s.title;sources.appendChild(a)});status.textContent=''}catch(e){status.textContent='Error: '+e.message}finally{send.disabled=false}}
-send.onclick=ask;prompt.addEventListener('keydown',e=>{if(e.key==='Enter'&&(e.ctrlKey||e.metaKey)){e.preventDefault();ask()}});load().catch(e=>status.textContent='Error loading configuration: '+e.message);prompt.focus();
-</script>
-</main>
-</body></html>
+const modelsEl=document.getElementById('models'),prompt=document.getElementById('prompt'),send=document.getElementById('send'),status=document.getElementById('status'),answer=document.getElementById('answer'),sources=document.getElementById('sources'),quota=document.getElementById('quota');let selected='',mode='chat',config=null;
+function updateSend(){send.disabled=!selected||!prompt.value.trim()}
+function renderModels(){modelsEl.innerHTML='';config.models.forEach(m=>{const b=document.createElement('button');b.className='model';b.textContent=m.label+(m.configured?'':' (not configured)');b.disabled=!m.configured;b.onclick=()=>{selected=m.id;document.querySelectorAll('.model').forEach(x=>x.classList.remove('active'));b.classList.add('active');updateSend()};modelsEl.appendChild(b)})}
+function renderModes(){document.querySelectorAll('.mode').forEach(b=>{b.classList.toggle('active',b.dataset.mode===mode);b.onclick=()=>{if((b.dataset.mode==='fast-search'&&!config.features.fast_search)||(b.dataset.mode==='deep-search'&&!config.features.deep_search)||(b.dataset.mode==='code'&&!config.features.code))return;mode=b.dataset.mode;renderModes()}})}
+async function load(){const r=await fetch('/api/config',{cache:'no-store'});if(!r.ok)throw Error('Could not load configuration');config=await r.json();renderModels();renderModes();await loadUsage()}
+async function loadUsage(){try{const r=await fetch('/api/usage',{cache:'no-store'});const d=await r.json();const parts=[];for(const [p,v] of Object.entries(d.providers)){const remaining=Math.max(0,v.daily_limit-v.today);parts.push(`<span class="pill">${p}: ${remaining} daily left</span>`)}quota.innerHTML=parts.join('')}catch(e){quota.textContent='Usage unavailable'}}
+async function ask(){const p=prompt.value.trim();if(!selected||!p)return;send.disabled=true;status.textContent='Working…';status.className='status';answer.hidden=true;sources.innerHTML='';try{const r=await fetch('/api/ask',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:selected,prompt:p,mode})});const d=await r.json().catch(()=>({}));if(!r.ok)throw Error(d.detail||'Request failed');answer.textContent=d.answer||'';answer.hidden=false;(d.sources||[]).forEach(s=>{const a=document.createElement('a');a.href=s.url;a.target='_blank';a.rel='noopener noreferrer';a.textContent=s.title||s.url;sources.appendChild(a)});status.textContent='';await loadUsage()}catch(e){status.textContent='Error: '+e.message;status.className='status err'}finally{updateSend()}}
+prompt.addEventListener('input',updateSend);prompt.addEventListener('keydown',e=>{if(e.key==='Enter'&&(e.ctrlKey||e.metaKey)){e.preventDefault();ask()}});send.onclick=ask;load().catch(e=>{status.textContent='Error loading configuration: '+e.message;status.className='status err'});prompt.focus();
+</script></main></body></html>
