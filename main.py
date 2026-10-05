@@ -1,6 +1,7 @@
 import calendar
 import hashlib
 import hmac
+import json
 import os
 import secrets
 import uuid
@@ -9,7 +10,7 @@ from pathlib import Path
 
 import httpx
 from fastapi import Cookie, FastAPI, HTTPException, Response
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from tavily import TavilyClient
@@ -363,6 +364,88 @@ def ask(body: AskRequest, response: Response, render_ai_user: str | None = Cooki
     if search_provider:
         record_usage(uid, search_provider, body.mode, search_provider)
     return {"answer": answer, "sources": sources, "provider": actual_provider}
+
+
+@app.post("/api/ask/stream")
+def ask_stream(body: AskRequest, response: Response, render_ai_user: str | None = Cookie(default=None, alias="__Host-render_ai_user")):
+    require_supabase()
+    if body.model not in MODELS:
+        raise HTTPException(400, "You must choose a model before chatting.")
+    uid = user_id_from_cookie(render_ai_user)
+    ensure_render_user(uid)
+    response.set_cookie("__Host-render_ai_user", signed_user_cookie(uid), max_age=31536000, httponly=True, samesite="strict", secure=True, path="/")
+    ai_provider = "groq" if body.mode == "code" else body.model
+    search_provider = "tavily" if body.mode == "fast-search" else "exa" if body.mode == "deep-search" else None
+    if search_provider:
+        check_quota(uid, search_provider)
+    context, sources = ("", [])
+    if search_provider:
+        context, sources = search_web(body.prompt, deep=body.mode == "deep-search")
+    check_quota(uid, ai_provider)
+    cfg = MODELS[ai_provider]
+    key = clean_key(os.getenv(cfg["key"], ""))
+    if not key:
+        raise HTTPException(503, f"{cfg['label']} is not configured. Add {cfg['key']}.")
+    headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+    if ai_provider == "openrouter":
+        site = os.getenv("OPENROUTER_SITE_URL", "").strip()
+        if site:
+            headers["HTTP-Referer"] = site
+        headers["X-Title"] = os.getenv("OPENROUTER_APP_NAME", "Render AI")
+    payload = {"model": cfg["model"], "messages": build_messages(body.prompt, context, body.mode, body.history), "max_tokens": 3000, "stream": True}
+    if ai_provider == "groq" and body.mode == "deep-think":
+        payload["reasoning_effort"] = "high"
+
+    def generate():
+        collected = []
+        try:
+            with httpx.stream("POST", cfg["url"], headers=headers, json=payload, timeout=90) as r:
+                if r.status_code != 200:
+                    if r.status_code in {429, 502}:
+                        actual_provider, fallback_text = ask_with_fallback(ai_provider, body.prompt, context, body.mode, body.history, uid)
+                        record_usage(uid, actual_provider, body.mode, MODELS[actual_provider]["model"])
+                        if search_provider:
+                            record_usage(uid, search_provider, body.mode, search_provider)
+                        yield f"data: {json.dumps({'type':'fallback','provider':actual_provider,'text':fallback_text,'sources':sources})}\n\n"
+                        yield "data: [DONE]\n\n"
+                        return
+                    yield f"data: {json.dumps({'type':'error','error':'The selected AI provider returned an error.'})}\n\n"
+                    return
+                for line in r.iter_lines():
+                    if not line or not line.startswith("data:"):
+                        continue
+                    data = line[5:].strip()
+                    if data == "[DONE]":
+                        break
+                    try:
+                        chunk = json.loads(data)
+                    except json.JSONDecodeError:
+                        continue
+                    choices = chunk.get("choices") or []
+                    if not choices:
+                        continue
+                    delta = (choices[0].get("delta") or {}).get("content") or ""
+                    if delta:
+                        collected.append(delta)
+                        yield f"data: {json.dumps({'type':'token','text':delta})}\n\n"
+        except httpx.HTTPError:
+            actual_provider, fallback_text = ask_with_fallback(ai_provider, body.prompt, context, body.mode, body.history, uid)
+            yield f"data: {json.dumps({'type':'fallback','provider':actual_provider,'text':fallback_text,'sources':sources})}\n\n"
+            record_usage(uid, actual_provider, body.mode, MODELS[actual_provider]["model"])
+            if search_provider:
+                record_usage(uid, search_provider, body.mode, search_provider)
+            yield "data: [DONE]\n\n"
+            return
+        answer = "".join(collected)
+        if answer.strip():
+            record_usage(uid, ai_provider, body.mode, cfg["model"])
+            if search_provider:
+                record_usage(uid, search_provider, body.mode, search_provider)
+        yield f"data: {json.dumps({'type':'done','sources':sources,'provider':ai_provider})}\n\n"
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(generate(), media_type="text/event-stream", headers={"Cache-Control":"no-cache","X-Accel-Buffering":"no"})
+
 
 
 @app.post("/api/chat/login")
