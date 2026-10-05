@@ -206,12 +206,13 @@ def usage_counts(user_id, provider):
     today = supabase_count("render_usage", {"provider": provider, "created_at": f"gte.{day_start}"})
     month = supabase_count("render_usage", {"provider": provider, "created_at": f"gte.{month_start}"})
     user_today = supabase_count("render_usage", {"provider": provider, "user_id": user_id, "created_at": f"gte.{day_start}"})
+    user_month = supabase_count("render_usage", {"provider": provider, "user_id": user_id, "created_at": f"gte.{month_start}"})
     active = max(1, supabase_count("render_users", {"last_seen": f"gte.{active_start}"}))
-    return today, month, active, user_today
+    return today, month, active, user_today, user_month
 
 
 def adaptive_remaining(user_id, provider):
-    today, month, active, user_today = usage_counts(user_id, provider)
+    today, month, active, user_today, user_month = usage_counts(user_id, provider)
     daily, monthly = provider_limits(provider)
     now = date.today()
     days_left = calendar.monthrange(now.year, now.month)[1] - now.day + 1
@@ -474,7 +475,7 @@ def global_usage():
     require_supabase()
     providers = {}
     for provider in DEFAULT_LIMITS:
-        today, month, active, _ = usage_counts("", provider)
+        today, month, active, _, _ = usage_counts("", provider)
         daily, monthly = provider_limits(provider)
         providers[provider] = {
             "today": today,
@@ -496,10 +497,9 @@ def usage(response: Response, render_ai_user: str | None = Cookie(default=None, 
     response.set_cookie("__Host-render_ai_user", signed_user_cookie(uid), max_age=31536000, httponly=True, samesite="strict", secure=IS_SECURE, path="/")
     providers = {}
     for provider in DEFAULT_LIMITS:
-        today, month, active, user_today = usage_counts(uid, provider)
-        user_month = supabase_count_usage(uid, provider, month_start())
+        today, month, active, user_today, user_month = usage_counts(uid, provider)
         daily, monthly = provider_limits(provider)
-        providers[provider] = {"today": today, "month": month, "daily_limit": daily, "monthly_limit": monthly, "user_today": user_today, "user_month": user_month if 'user_month' in locals() else 0, "user_daily_remaining": max(0, daily - user_today), "user_remaining": adaptive_remaining(uid, provider)}
+        providers[provider] = {"today": today, "month": month, "daily_limit": daily, "monthly_limit": monthly, "user_today": user_today, "user_month": user_month, "user_daily_remaining": max(0, daily - user_today), "user_remaining": adaptive_remaining(uid, provider)}
     return {"providers": providers}
 
 
