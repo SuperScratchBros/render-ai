@@ -2,5 +2,3 @@ fastapi
 uvicorn
 httpx
 tavily-python
-psycopg[binary]
-exa-py
