@@ -1,15 +1,38 @@
 <!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Render AI</title>
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Render AI</title>
+<script src="https://cdn.jsdelivr.net/npm/marked@16.3.0/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3.2.6/dist/purify.min.js"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.22/dist/katex.min.css">
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.22/dist/katex.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.22/dist/contrib/auto-render.min.js"></script>
 <style>
-*{box-sizing:border-box}body{margin:0;background:#070909;color:#eaffea;font:15px Arial,sans-serif}main{width:min(980px,94%);margin:36px auto}.top{display:flex;justify-content:space-between;align-items:center;gap:16px}.brand{font-size:30px;font-weight:800}.sub{color:#91a591;margin:5px 0 24px}.panel{background:#101513;border:1px solid #263329;border-radius:14px;padding:16px;margin-bottom:14px;box-shadow:0 10px 30px #0005}.label{font-size:12px;color:#8fa28f;text-transform:uppercase;letter-spacing:.08em;margin-bottom:7px}.models{display:flex;gap:8px;flex-wrap:wrap}.model,.mode,.send,.chat-send{border:1px solid #334537;background:#151c17;color:#dfffe2;border-radius:9px;padding:10px 13px;cursor:pointer}.model.active,.mode.active{border-color:#32ff68;box-shadow:0 0 14px #32ff6830}.model:disabled,.mode:disabled{opacity:.4;cursor:not-allowed}textarea,input{width:100%;background:#0b0f0c;color:#effff0;border:1px solid #304034;border-radius:10px;padding:13px;outline:none}textarea{min-height:150px;resize:vertical}textarea:focus,input:focus{border-color:#32ff68}.actions{display:flex;gap:8px;margin-top:9px}.send,.chat-send{flex:1;background:#18b84b;border-color:#18b84b;color:#041006;font-weight:800}.send:disabled,.chat-send:disabled{opacity:.5}.status{min-height:22px;color:#a9b9aa;margin:9px 2px}.answer{white-space:pre-wrap;line-height:1.55;background:#0b100d;border:1px solid #26372a;border-radius:10px;padding:15px;margin-top:10px}.sources a{display:block;color:#75ff9a;margin:7px 0}.quota{font-size:12px;color:#9fb0a0}.provider-used{display:inline-block;color:#75ff9a;margin-top:6px}.pill{display:inline-block;border:1px solid #304236;border-radius:999px;padding:4px 8px;margin:3px}.err{color:#ff8d8d}.chat-list{height:300px;overflow:auto;background:#0b100d;border:1px solid #26372a;border-radius:10px;padding:10px;margin:10px 0}.msg{padding:7px 4px;border-bottom:1px solid #1d281f}.msg b{color:#75ff9a}.msg small{color:#6f7e70;margin-left:7px}.chat-row{display:flex;gap:8px}.chat-row input{flex:1}.chat-help{color:#819181;font-size:12px;margin-top:7px}@media(max-width:650px){.top{align-items:flex-start;flex-direction:column}.actions,.chat-row{flex-direction:column}}
-</style></head>
+*{box-sizing:border-box}body{margin:0;background:#070909;color:#eaffea;font:15px Arial,sans-serif}main{width:min(1050px,94%);margin:28px auto}.top{display:flex;justify-content:space-between;align-items:center;gap:16px}.brand{font-size:30px;font-weight:800}.sub{color:#91a591;margin:5px 0 18px}.panel{background:#101513;border:1px solid #263329;border-radius:14px;padding:16px;margin-bottom:14px;box-shadow:0 10px 30px #0005}.label{font-size:12px;color:#8fa28f;text-transform:uppercase;letter-spacing:.08em;margin-bottom:7px}.models{display:flex;gap:8px;flex-wrap:wrap}.model,.mode,.send,.chat-send,.usage-btn,.toggle{border:1px solid #334537;background:#151c17;color:#dfffe2;border-radius:9px;padding:10px 13px;cursor:pointer}.model.active,.mode.active,.toggle.active{border-color:#32ff68;box-shadow:0 0 14px #32ff6830}.model:disabled,.mode:disabled{opacity:.4;cursor:not-allowed}textarea,input{width:100%;background:#0b0f0c;color:#effff0;border:1px solid #304034;border-radius:10px;padding:13px;outline:none}textarea{min-height:110px;resize:vertical}textarea:focus,input:focus{border-color:#32ff68}.actions{display:flex;gap:8px;margin-top:9px}.send,.chat-send{flex:1;background:#18b84b;border-color:#18b84b;color:#041006;font-weight:800}.send:disabled,.chat-send:disabled{opacity:.5}.status{min-height:22px;color:#a9b9aa;margin:9px 2px}.quota{font-size:12px;color:#9fb0a0}.provider-used{display:inline-block;color:#75ff9a;margin-top:6px}.pill{display:inline-block;border:1px solid #304236;border-radius:999px;padding:4px 8px;margin:3px}.err{color:#ff8d8d}.ai-room{height:430px;overflow:auto;background:#090e0b;border:1px solid #26372a;border-radius:12px;padding:14px;margin-bottom:12px}.bubble{max-width:88%;padding:11px 13px;border-radius:12px;margin:8px 0;line-height:1.55}.bubble.user{margin-left:auto;background:#12351d;border:1px solid #245b32}.bubble.ai{background:#101713;border:1px solid #26372a}.bubble .who{font-size:11px;color:#75ff9a;margin-bottom:5px;font-weight:700}.bubble.ai p:first-child{margin-top:0}.bubble.ai p:last-child{margin-bottom:0}.bubble.ai pre{overflow:auto;background:#050806;border:1px solid #26372a;border-radius:8px;padding:10px}.bubble.ai code{font-family:ui-monospace,SFMono-Regular,monospace}.bubble.ai table{border-collapse:collapse;width:100%}.bubble.ai th,.bubble.ai td{border:1px solid #304236;padding:6px}.bubble.ai blockquote{border-left:3px solid #32ff68;padding-left:10px;color:#b9c9ba}.bubble.ai a{color:#75ff9a}.generated{max-width:100%;border-radius:10px;border:1px solid #304236;display:block;margin-top:8px}.sources a{display:block;color:#75ff9a;margin:7px 0}.chat-list{height:300px;overflow:auto;background:#0b100d;border:1px solid #26372a;border-radius:10px;padding:10px;margin:10px 0}.msg{padding:7px 4px;border-bottom:1px solid #1d281f}.msg b{color:#75ff9a}.msg small{color:#6f7e70;margin-left:7px}.chat-row{display:flex;gap:8px}.chat-row input{flex:1}.chat-help{color:#819181;font-size:12px;margin-top:7px}.usage-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px}.usage-card{background:#0b100d;border:1px solid #26372a;border-radius:10px;padding:13px}.usage-card h3{margin:0 0 8px}.usage-number{font-size:24px;font-weight:800;color:#75ff9a}.hidden{display:none}@media(max-width:650px){.top{align-items:flex-start;flex-direction:column}.actions,.chat-row{flex-direction:column}.bubble{max-width:96%}}
+</style>
+</head>
 <body><main>
-<div class="top"><div><div class="brand">Render AI</div><div class="sub">Choose a model before you chat. Search and reasoning modes are optional.</div></div><div id="quota" class="quota">Loading usage…</div></div>
+<div class="top"><div><div class="brand">Render AI</div><div class="sub">Choose a model before you chat. Every Send opens the AI conversation room.</div></div><div><div id="quota" class="quota">Loading usage…</div><button id="usagePage" class="usage-btn">API Usage</button></div></div>
 
 <section class="panel"><div class="label">Model — required</div><div id="models" class="models"></div></section>
-<section class="panel"><div class="label">Mode</div><div class="models"><button class="mode active" data-mode="chat">Chat</button><button class="mode" data-mode="fast-search">Fast Search</button><button class="mode" data-mode="deep-search">Deep Search</button><button class="mode" data-mode="code">Write Code</button><button class="mode" data-mode="deep-think">Deep Think</button></div></section>
-<section class="panel"><textarea id="prompt" placeholder="Choose a model, then ask anything…"></textarea><div class="actions"><button id="send" class="send" disabled>Send</button></div><div id="status" class="status"></div><div id="providerUsed" class="provider-used"></div><div id="answer" class="answer" hidden></div><div id="sources" class="sources"></div></section>
+<section class="panel"><div class="label">Mode</div><div class="models">
+<button class="mode active" data-mode="chat">Chat</button><button class="mode" data-mode="fast-search">Fast Search</button><button class="mode" data-mode="deep-search">Deep Search</button><button class="mode" data-mode="code">Write Code</button><button class="mode" data-mode="deep-think">Deep Think</button><button class="mode" data-mode="image">Generate Image</button>
+</div></section>
+
+<section class="panel">
+<div class="label">AI Chatroom</div>
+<div id="aiRoom" class="ai-room"></div>
+<textarea id="prompt" placeholder="Choose a model, then ask anything…"></textarea>
+<div class="actions"><button id="send" class="send" disabled>Send</button></div>
+<div id="status" class="status"></div><div id="providerUsed" class="provider-used"></div><div id="sources" class="sources"></div>
+</section>
+
+<section id="usagePanel" class="panel hidden">
+<div class="top"><div><div class="label">API Usage — everyone</div><div class="chat-help">Aggregate Render AI requests across all users. Individual user IDs are never shown here.</div></div>
+<div class="models"><button class="toggle active" data-view="requests">Requests</button><button class="toggle" data-view="remaining">Remaining</button></div></div>
+<div id="usageGrid" class="usage-grid" style="margin-top:12px"></div><div id="usageNote" class="chat-help"></div>
+</section>
 
 <section class="panel">
 <div class="label">Community Chat</div>
@@ -19,51 +42,53 @@
 </section>
 
 <script>
-const modelsEl=document.getElementById('models'),prompt=document.getElementById('prompt'),send=document.getElementById('send'),status=document.getElementById('status'),providerUsed=document.getElementById('providerUsed'),answer=document.getElementById('answer'),sources=document.getElementById('sources'),quota=document.getElementById('quota');
-const username=document.getElementById('username'),login=document.getElementById('login'),chatLogin=document.getElementById('chatLogin'),chatArea=document.getElementById('chatArea'),chatWho=document.getElementById('chatWho'),chatList=document.getElementById('chatList'),chatInput=document.getElementById('chatInput'),chatSend=document.getElementById('chatSend'),chatStatus=document.getElementById('chatStatus');
-let selected='',mode='chat',config=null,chatReady=false,history=JSON.parse(localStorage.getItem('render-ai-history')||'[]');
+const modelsEl=document.getElementById('models'),prompt=document.getElementById('prompt'),send=document.getElementById('send'),status=document.getElementById('status'),providerUsed=document.getElementById('providerUsed'),sources=document.getElementById('sources'),quota=document.getElementById('quota'),aiRoom=document.getElementById('aiRoom');
+const username=document.getElementById('username'),login=document.getElementById('login'),chatLogin=document.getElementById('chatLogin'),chatArea=document.getElementById('chatArea'),chatWho=document.getElementById('chatWho'),chatList=document.getElementById('chatList'),chatInput=document.getElementById('chatInput'),chatSend=document.getElementById('chatSend'),chatStatus=document.getElementById('chatStatus'),usagePage=document.getElementById('usagePage'),usagePanel=document.getElementById('usagePanel'),usageGrid=document.getElementById('usageGrid'),usageNote=document.getElementById('usageNote');
+let selected='',mode='chat',config=null,chatReady=false,history=JSON.parse(localStorage.getItem('render-ai-history')||'[]'),usageView='requests';
 
-function saveHistory(){history=history.slice(-12);localStorage.setItem('render-ai-history',JSON.stringify(history))}
+function saveHistory(){history=history.slice(-10);localStorage.setItem('render-ai-history',JSON.stringify(history))}
 function updateSend(){send.disabled=!selected||!prompt.value.trim()}
 function renderModels(){modelsEl.innerHTML='';config.models.forEach(m=>{const b=document.createElement('button');b.className='model';b.textContent=m.label+(m.configured?'':' (not configured)');b.disabled=!m.configured;b.onclick=()=>{selected=m.id;document.querySelectorAll('.model').forEach(x=>x.classList.remove('active'));b.classList.add('active');updateSend()};modelsEl.appendChild(b)})}
-function renderModes(){document.querySelectorAll('.mode').forEach(b=>{const unavailable=(b.dataset.mode==='fast-search'&&!config.features.fast_search)||(b.dataset.mode==='deep-search'&&!config.features.deep_search)||(b.dataset.mode==='code'&&!config.features.code);b.disabled=unavailable;b.classList.toggle('active',b.dataset.mode===mode);b.onclick=()=>{if(b.disabled)return;mode=b.dataset.mode;renderModes()}})}
+function renderModes(){document.querySelectorAll('.mode').forEach(b=>{const unavailable=(b.dataset.mode==='fast-search'&&!config.features.fast_search)||(b.dataset.mode==='deep-search'&&!config.features.deep_search)||(b.dataset.mode==='code'&&!config.features.code)||(b.dataset.mode==='image'&&!config.features.image);b.disabled=unavailable;b.classList.toggle('active',b.dataset.mode===mode);b.onclick=()=>{if(!b.disabled){mode=b.dataset.mode;renderModes()}}})}
+function renderMarkdown(text){let html=DOMPurify.sanitize(marked.parse(text||'',{breaks:true}));const box=document.createElement('div');box.innerHTML=html;try{renderMathInElement(box,{delimiters:[{left:'$$',right:'$$',display:true},{left:'\\[',right:'\\]',display:true},{left:'$',right:'$',display:false},{left:'\\(',right:'\\)',display:false}],throwOnError:false})}catch(e){}return box.innerHTML}
+function addAiBubble(text,meta='AI'){const row=document.createElement('div');row.className='bubble ai';row.innerHTML='<div class="who"></div><div class="content"></div>';row.querySelector('.who').textContent=meta;row.querySelector('.content').innerHTML=renderMarkdown(text);aiRoom.appendChild(row);aiRoom.scrollTop=aiRoom.scrollHeight;return row.querySelector('.content')}
+function addUserBubble(text){const row=document.createElement('div');row.className='bubble user';row.innerHTML='<div class="who">You</div><div class="content"></div>';row.querySelector('.content').textContent=text;aiRoom.appendChild(row);aiRoom.scrollTop=aiRoom.scrollHeight}
+function renderHistory(){aiRoom.innerHTML='';const pairs=[];for(let i=0;i<history.length;i++){if(history[i].role==='user'){const reply=history[i+1]&&history[i+1].role==='assistant'?history[i+1]:null;pairs.push([history[i],reply]);if(reply)i++}}pairs.slice(-5).forEach(([u,a])=>{addUserBubble(u.content);if(a)addAiBubble(a.content)});if(!pairs.length){const empty=document.createElement('div');empty.className='chat-help';empty.textContent='Your last 5 prompts and replies will appear here.';aiRoom.appendChild(empty)}}
 async function loadUsage(){try{const r=await fetch('/api/usage',{cache:'no-store'});if(!r.ok)throw Error();const d=await r.json();const parts=[];for(const [p,v] of Object.entries(d.providers)){parts.push('<span class="pill">'+p+': '+Math.max(0,v.user_remaining)+' left · '+Math.max(0,v.user_today)+' used today</span>')}quota.innerHTML=parts.join('')}catch(e){quota.textContent='Usage unavailable'}}
-async function load(){const r=await fetch('/api/config',{cache:'no-store'});if(!r.ok)throw Error('Could not load configuration');config=await r.json();renderModels();renderModes();await loadUsage();await loadChat()}
-
-function clearAnswer(){answer.hidden=false;answer.textContent='';sources.innerHTML=''}
+async function load(){const r=await fetch('/api/config',{cache:'no-store'});if(!r.ok)throw Error('Could not load configuration');config=await r.json();renderModels();renderModes();renderHistory();await loadUsage();await loadChat()}
 function addSource(s){if(!s.url)return;const a=document.createElement('a');a.href=s.url;a.target='_blank';a.rel='noopener noreferrer';a.textContent=s.title||s.url;sources.appendChild(a)}
+function addHistoryPair(p,a){history.push({role:'user',content:p});if(a)history.push({role:'assistant',content:a});saveHistory()}
 async function ask(){
  const p=prompt.value.trim();if(!selected||!p)return;
- send.disabled=true;status.textContent='Working…';status.className='status';providerUsed.textContent='';clearAnswer();
- const requestHistory=history.slice(-12);
- history.push({role:'user',content:p});saveHistory();
+ send.disabled=true;status.textContent='Working…';status.className='status';providerUsed.textContent='';sources.innerHTML='';addUserBubble(p);prompt.value='';
+ const requestHistory=history.slice(-10);
  try{
+   if(mode==='image'){
+     const r=await fetch('/api/image',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:selected,prompt:p,mode:'image',history:requestHistory})});
+     const d=await r.json().catch(()=>({}));if(!r.ok)throw Error(d.detail||'Image request failed');
+     const row=document.createElement('div');row.className='bubble ai';row.innerHTML='<div class="who">Pixazo · Flux</div><div class="content"></div>';const c=row.querySelector('.content');c.textContent='Generated image';const img=document.createElement('img');img.className='generated';img.src=d.image;img.alt=p;img.loading='lazy';c.appendChild(img);aiRoom.appendChild(row);aiRoom.scrollTop=aiRoom.scrollHeight;status.textContent='Image generated';providerUsed.textContent='Provider: Pixazo · Flux';addHistoryPair(p,'![Generated image]('+d.image+')');await loadUsage();return
+   }
    const r=await fetch('/api/ask/stream',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:selected,prompt:p,mode,history:requestHistory})});
    if(!r.ok){const d=await r.json().catch(()=>({}));throw Error(d.detail||'Request failed')}
+   const row=document.createElement('div');row.className='bubble ai';row.innerHTML='<div class="who">AI</div><div class="content"></div>';aiRoom.appendChild(row);const content=row.querySelector('.content');aiRoom.scrollTop=aiRoom.scrollHeight;
    const reader=r.body.getReader(),decoder=new TextDecoder();let buffer='',full='';
    while(true){
-     const {value,done}=await reader.read();if(done)break;
-     buffer+=decoder.decode(value,{stream:true});
+     const {value,done}=await reader.read();if(done)break;buffer+=decoder.decode(value,{stream:true});
      const events=buffer.split('\n\n');buffer=events.pop()||'';
-     for(const event of events){
-       for(const line of event.split('\n')){
-         if(!line.startsWith('data: '))continue;
-         const raw=line.slice(6);if(raw==='[DONE]')continue;
-         let d;try{d=JSON.parse(raw)}catch(e){continue}
-         if(d.type==='token'){full+=d.text;answer.textContent=full;answer.hidden=false}
-         if(d.type==='fallback'){full=d.text||'';answer.textContent=full;answer.hidden=false;(d.sources||[]).forEach(addSource);status.textContent='Fallback used';providerUsed.textContent='Actually used: '+(d.provider||'unknown')+' · '+(d.model||'unknown')+' (fallback from '+(d.from_provider||selected)+')'}
-         if(d.type==='done'){(d.sources||[]).forEach(addSource);status.textContent=d.provider?'Used '+d.provider:'';providerUsed.textContent=d.provider?'Model: '+(d.model||'unknown')+' · Provider: '+d.provider:''}
-         if(d.type==='error')throw Error(d.error||'AI request failed')
-       }
+     for(const event of events)for(const line of event.split('\n')){if(!line.startsWith('data: '))continue;const raw=line.slice(6);if(raw==='[DONE]')continue;let d;try{d=JSON.parse(raw)}catch(e){continue}
+       if(d.type==='token'){full+=d.text;content.innerHTML=renderMarkdown(full);aiRoom.scrollTop=aiRoom.scrollHeight}
+       if(d.type==='fallback'){full=d.text||'';content.innerHTML=renderMarkdown(full);status.textContent='Fallback used';providerUsed.textContent='Actually used: '+(d.provider||'unknown')+' · '+(d.model||'unknown');(d.sources||[]).forEach(addSource)}
+       if(d.type==='done'){status.textContent=d.provider?'Used '+d.provider:'';providerUsed.textContent=d.provider?'Model: '+(d.model||'unknown')+' · Provider: '+d.provider:'';(d.sources||[]).forEach(addSource)}
+       if(d.type==='error')throw Error(d.error||'AI request failed')
      }
    }
-   if(full.trim()){history.push({role:'assistant',content:full});saveHistory()}
-   await loadUsage();
- }catch(e){
-   history=requestHistory;saveHistory();status.textContent='Error: '+e.message;status.className='status err'
- }finally{updateSend()}
+   if(full.trim())addHistoryPair(p,full);else history=requestHistory;await loadUsage()
+ }catch(e){history=requestHistory;saveHistory();status.textContent='Error: '+e.message;status.className='status err'}finally{updateSend();prompt.focus()}
 }
-
+async function loadGlobalUsage(){
+ try{const r=await fetch('/api/usage/global',{cache:'no-store'});if(!r.ok)throw Error();const d=await r.json();usageGrid.innerHTML='';for(const [p,v] of Object.entries(d.providers)){const card=document.createElement('div');card.className='usage-card';const title=document.createElement('h3');title.textContent=p;const num=document.createElement('div');num.className='usage-number';if(usageView==='requests')num.textContent=v.month+' / '+v.monthly_limit+' this month';else num.textContent=v.monthly_remaining+' left this month';const day=document.createElement('div');day.className='chat-help';day.textContent=usageView==='requests'?v.today+' requests today · '+v.active_users+' active users':v.daily_remaining+' left today';card.append(title,num,day);usageGrid.appendChild(card)}usageNote.textContent=d.note||''}catch(e){usageGrid.textContent='Could not load aggregate usage.'}}
+usagePage.onclick=()=>{usagePanel.classList.toggle('hidden');if(!usagePanel.classList.contains('hidden'))loadGlobalUsage()};
+document.querySelectorAll('.toggle').forEach(b=>b.onclick=()=>{usageView=b.dataset.view;document.querySelectorAll('.toggle').forEach(x=>x.classList.remove('active'));b.classList.add('active');loadGlobalUsage()});
 function renderMessages(messages){chatList.innerHTML='';if(!messages.length){chatList.textContent='No messages yet. Be the first!';return}messages.forEach(m=>{const row=document.createElement('div');row.className='msg';const b=document.createElement('b');b.textContent=m.username;const small=document.createElement('small');small.textContent=new Date(m.created_at).toLocaleTimeString();const text=document.createElement('div');text.textContent=m.content;row.append(b,small,text);chatList.appendChild(row)});chatList.scrollTop=chatList.scrollHeight}
 async function loadChat(){try{const r=await fetch('/api/chat/me',{cache:'no-store'});if(!r.ok)return;const d=await r.json();chatReady=true;chatLogin.hidden=true;chatArea.hidden=false;chatWho.textContent='Signed in as '+d.username;await refreshChat()}catch(e){}}
 async function refreshChat(){if(!chatReady)return;try{const r=await fetch('/api/chat/messages',{cache:'no-store'});if(!r.ok){chatReady=false;return}const d=await r.json();renderMessages(d.messages||[])}catch(e){}}
