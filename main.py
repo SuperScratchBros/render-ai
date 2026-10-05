@@ -497,8 +497,9 @@ def usage(response: Response, render_ai_user: str | None = Cookie(default=None, 
     providers = {}
     for provider in DEFAULT_LIMITS:
         today, month, active, user_today = usage_counts(uid, provider)
+        user_month = supabase_count_usage(uid, provider, month_start())
         daily, monthly = provider_limits(provider)
-        providers[provider] = {"today": today, "month": month, "daily_limit": daily, "monthly_limit": monthly, "user_today": user_today, "user_remaining": adaptive_remaining(uid, provider)}
+        providers[provider] = {"today": today, "month": month, "daily_limit": daily, "monthly_limit": monthly, "user_today": user_today, "user_month": user_month if 'user_month' in locals() else 0, "user_daily_remaining": max(0, daily - user_today), "user_remaining": adaptive_remaining(uid, provider)}
     return {"providers": providers}
 
 
