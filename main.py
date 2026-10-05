@@ -294,10 +294,11 @@ def config():
 
 
 @app.get("/api/usage")
-def usage(render_ai_user: str | None = Cookie(default=None, alias="__Host-render_ai_user")):
+def usage(response: Response, render_ai_user: str | None = Cookie(default=None, alias="__Host-render_ai_user")):
     require_supabase()
     uid = user_id_from_cookie(render_ai_user)
     ensure_render_user(uid)
+    response.set_cookie("__Host-render_ai_user", signed_user_cookie(uid), max_age=31536000, httponly=True, samesite="strict", secure=True, path="/")
     providers = {}
     for provider in DEFAULT_LIMITS:
         today, month, active, user_today = usage_counts(uid, provider)
