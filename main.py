@@ -1,5 +1,6 @@
 import calendar
 import hashlib
+import re
 import hmac
 import json
 import os
@@ -25,6 +26,8 @@ MODELS = {
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "").strip()
 EXA_API_KEY = os.getenv("EXA_API_KEY", "").strip()
 PIXAZO_API_KEY = os.getenv("PIXAZO_API_KEY", "").strip()
+UPSTASH_BLOB_TOKEN = os.getenv("UPSTASH_BLOB_TOKEN", "").strip()
+BLOB_MAX_FILE_SIZE = max(1, int(os.getenv("BLOB_MAX_FILE_SIZE", str(25 * 1024 * 1024)))) if os.getenv("BLOB_MAX_FILE_SIZE", "").strip().isdigit() else 25 * 1024 * 1024
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip().rstrip("/")
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip()
 APP_SECRET_KEY = os.getenv("APP_SECRET_KEY", "").strip()
@@ -87,6 +90,51 @@ def env_int(name, default):
 
 
 DEFAULT_LIMITS = {"groq": (1000, 30000), "gemini": (20, 600), "openrouter": (50, 1500), "tavily": (100, 1000), "exa": (25, 833), "pixazo": (100, 2500)}
+
+
+def safe_blob_filename(filename):
+    name = Path(filename or "file").name
+    name = re.sub(r"[^A-Za-z0-9._-]+", "_", name).strip("._")
+    return name[:120] or "file"
+
+
+def blob_presign(method, key, headers=None, expires_in=600):
+    if not UPSTASH_BLOB_TOKEN:
+        raise HTTPException(503, "Upstash Blob is not configured. Add UPSTASH_BLOB_TOKEN.")
+    payload = {"method": method, "key": key, "expiresIn": min(600, max(1, int(expires_in)))}
+    if headers:
+        payload["headers"] = headers
+    try:
+        r = httpx.post("https://blob.upstash.io/v1/presign",
+                       headers={"Authorization": f"Bearer {UPSTASH_BLOB_TOKEN}", "Content-Type": "application/json"},
+                       json=payload, timeout=15)
+    except httpx.HTTPError as exc:
+        raise HTTPException(502, "Upstash Blob signing service is unavailable.") from exc
+    if r.status_code == 401:
+        raise HTTPException(503, "Upstash Blob rejected the bucket token.")
+    if r.status_code == 429:
+        raise HTTPException(429, "Upstash Blob signing is rate-limited right now.")
+    if r.status_code >= 500:
+        raise HTTPException(502, "Upstash Blob signing service failed.")
+    if r.status_code >= 300:
+        raise HTTPException(400, "Upstash Blob refused the file request.")
+    try:
+        data = r.json()
+    except ValueError as exc:
+        raise HTTPException(502, "Upstash Blob returned an invalid signing response.") from exc
+    if not isinstance(data.get("url"), str) or not data["url"].startswith("https://"):
+        raise HTTPException(502, "Upstash Blob returned an invalid upload URL.")
+    return data
+
+
+def file_path_for(user_id, filename):
+    return f"files/{user_id}/{uuid.uuid4().hex}-{safe_blob_filename(filename)}"
+
+
+def verify_user_file_path(user_id, path):
+    if not isinstance(path, str) or not path.startswith(f"files/{user_id}/") or len(path) > 300:
+        raise HTTPException(403, "You do not have access to this file.")
+    return path
 
 
 def provider_limits(provider):
@@ -417,7 +465,7 @@ def health():
 def config():
     return {
         "models": [{"id": k, "label": v["label"], "configured": bool(clean_key(os.getenv(v["key"], "")))} for k, v in MODELS.items()],
-        "features": {"fast_search": bool(TAVILY_API_KEY), "deep_search": bool(EXA_API_KEY), "code": bool(clean_key(os.getenv("GROQ_API_KEY", ""))), "deep_think": True, "image": bool(PIXAZO_API_KEY), "community_chat": bool(SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY)},
+        "features": {"fast_search": bool(TAVILY_API_KEY), "deep_search": bool(EXA_API_KEY), "code": bool(clean_key(os.getenv("GROQ_API_KEY", ""))), "deep_think": True, "image": bool(PIXAZO_API_KEY), "files": bool(UPSTASH_BLOB_TOKEN and SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY), "community_chat": bool(SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY)},
     }
 
 
@@ -452,6 +500,80 @@ def usage(response: Response, render_ai_user: str | None = Cookie(default=None, 
         daily, monthly = provider_limits(provider)
         providers[provider] = {"today": today, "month": month, "daily_limit": daily, "monthly_limit": monthly, "user_today": user_today, "user_remaining": adaptive_remaining(uid, provider)}
     return {"providers": providers}
+
+
+class FileUploadRequest(BaseModel):
+    filename: str = Field(min_length=1, max_length=255)
+    content_type: str = Field(default="application/octet-stream", min_length=1, max_length=120)
+    size: int = Field(gt=0, le=100 * 1024 * 1024)
+
+
+class FileCompleteRequest(BaseModel):
+    path: str = Field(min_length=1, max_length=300)
+    filename: str = Field(min_length=1, max_length=255)
+    content_type: str = Field(default="application/octet-stream", min_length=1, max_length=120)
+    size: int = Field(gt=0, le=100 * 1024 * 1024)
+
+
+class FileReadRequest(BaseModel):
+    path: str = Field(min_length=1, max_length=300)
+
+
+@app.post("/api/files/upload-url")
+def file_upload_url(body: FileUploadRequest, response: Response, render_ai_user: str | None = Cookie(default=None, alias="__Host-render_ai_user")):
+    require_supabase()
+    if not UPSTASH_BLOB_TOKEN:
+        raise HTTPException(503, "Upstash Blob is not configured. Add UPSTASH_BLOB_TOKEN.")
+    if body.size > BLOB_MAX_FILE_SIZE:
+        raise HTTPException(413, f"File is too large. Maximum is {BLOB_MAX_FILE_SIZE // (1024 * 1024)} MB.")
+    uid = user_id_from_cookie(render_ai_user)
+    ensure_render_user(uid)
+    response.set_cookie("__Host-render_ai_user", signed_user_cookie(uid), max_age=31536000, httponly=True, samesite="strict", secure=IS_SECURE, path="/")
+    path = file_path_for(uid, body.filename)
+    content_type = body.content_type.strip() or "application/octet-stream"
+    signed = blob_presign("PUT", path, {"content-type": content_type, "content-length": str(body.size)}, 600)
+    return {"path": path, "url": signed["url"], "expires_at": signed.get("expiresAt"), "headers": signed.get("headers") or {"content-type": content_type, "content-length": str(body.size)}}
+
+
+@app.post("/api/files/complete")
+def file_complete(body: FileCompleteRequest, response: Response, render_ai_user: str | None = Cookie(default=None, alias="__Host-render_ai_user")):
+    require_supabase()
+    uid = user_id_from_cookie(render_ai_user)
+    ensure_render_user(uid)
+    response.set_cookie("__Host-render_ai_user", signed_user_cookie(uid), max_age=31536000, httponly=True, samesite="strict", secure=IS_SECURE, path="/")
+    verify_user_file_path(uid, body.path)
+    if body.size > BLOB_MAX_FILE_SIZE:
+        raise HTTPException(413, "File exceeds the configured size limit.")
+    q=supabase_request("POST","render_files",json={"user_id":uid,"path":body.path,"filename":body.filename,"content_type":body.content_type,"size":body.size},prefer="resolution=merge-duplicates,return=representation")
+    if q.status_code >= 300:
+        raise HTTPException(503, "File uploaded, but its metadata could not be saved.")
+    data=q.json()
+    return {"ok":True,"file":data[0] if data else {"path":body.path,"filename":body.filename}}
+
+
+@app.get("/api/files")
+def files_list(response: Response, render_ai_user: str | None = Cookie(default=None, alias="__Host-render_ai_user")):
+    require_supabase()
+    uid=user_id_from_cookie(render_ai_user)
+    ensure_render_user(uid)
+    response.set_cookie("__Host-render_ai_user",signed_user_cookie(uid),max_age=31536000,httponly=True,samesite="strict",secure=IS_SECURE,path="/")
+    q=supabase_request("GET",f"render_files?select=id,path,filename,content_type,size,created_at&user_id=eq.{uid}&order=created_at.desc&limit=100")
+    if q.status_code >= 300: raise HTTPException(503,"Could not load your files.")
+    return {"files":q.json()}
+
+
+@app.post("/api/files/read-url")
+def file_read_url(body: FileReadRequest, response: Response, render_ai_user: str | None = Cookie(default=None, alias="__Host-render_ai_user")):
+    require_supabase()
+    uid=user_id_from_cookie(render_ai_user)
+    ensure_render_user(uid)
+    response.set_cookie("__Host-render_ai_user",signed_user_cookie(uid),max_age=31536000,httponly=True,samesite="strict",secure=IS_SECURE,path="/")
+    path=verify_user_file_path(uid,body.path)
+    q=supabase_request("GET",f"render_files?select=filename,content_type,path&user_id=eq.{uid}&path=eq.{path}&limit=1")
+    if q.status_code >= 300 or not q.json(): raise HTTPException(404,"File not found.")
+    f=q.json()[0]
+    signed=blob_presign("GET",path,None,300)
+    return {"url":signed["url"],"expires_at":signed.get("expiresAt"),"filename":f["filename"],"content_type":f["content_type"]}
 
 
 @app.post("/api/image")
