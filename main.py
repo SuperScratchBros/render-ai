@@ -16,7 +16,7 @@ from tavily import TavilyClient
 
 BASE_DIR = Path(__file__).parent
 MODELS = {
-    "groq": {"label": "OpenAI: GPT 4.0", "model": os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"), "url": "https://api.groq.com/openai/v1/chat/completions", "key": "GROQ_API_KEY"},
+    "groq": {"label": "OpenAI GPT-OSS 120B via Groq", "model": os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"), "url": "https://api.groq.com/openai/v1/chat/completions", "key": "GROQ_API_KEY"},
     "gemini": {"label": "Gemini: 3.8 Flash", "model": os.getenv("GEMINI_MODEL", "gemini-3.8-flash"), "url": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", "key": "GEMINI_API_KEY"},
     "openrouter": {"label": "OpenRouter: Mixed", "model": os.getenv("OPENROUTER_MODEL", "openrouter/free"), "url": "https://openrouter.ai/api/v1/chat/completions", "key": "OPENROUTER_API_KEY"},
 }
