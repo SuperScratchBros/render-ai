@@ -24,6 +24,7 @@ MODELS = {
 }
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "").strip()
 EXA_API_KEY = os.getenv("EXA_API_KEY", "").strip()
+PIXAZO_API_KEY = os.getenv("PIXAZO_API_KEY", "").strip()
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip().rstrip("/")
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip()
 APP_SECRET_KEY = os.getenv("APP_SECRET_KEY", "").strip()
@@ -36,7 +37,7 @@ IS_SECURE = os.getenv("ENVIRONMENT", "").lower() in {"production", "render"} or 
 class AskRequest(BaseModel):
     model: str = Field(min_length=1)
     prompt: str = Field(min_length=1, max_length=12000)
-    mode: str = Field(default="chat", pattern="^(chat|fast-search|deep-search|code|deep-think)$")
+    mode: str = Field(default="chat", pattern="^(chat|fast-search|deep-search|code|deep-think|image)$")
     history: list[dict] = Field(default_factory=list, max_length=20)
 
 
@@ -85,7 +86,7 @@ def env_int(name, default):
         return default
 
 
-DEFAULT_LIMITS = {"groq": (1000, 30000), "gemini": (20, 600), "openrouter": (50, 1500), "tavily": (100, 1000), "exa": (25, 833)}
+DEFAULT_LIMITS = {"groq": (1000, 30000), "gemini": (20, 600), "openrouter": (50, 1500), "tavily": (100, 1000), "exa": (25, 833), "pixazo": (100, 2500)}
 
 
 def provider_limits(provider):
@@ -347,6 +348,52 @@ def ask_with_fallback(provider, prompt, context, mode, history, user_id):
     raise HTTPException(502, "No AI provider was available.")
 
 
+def extract_media_url(value):
+    if isinstance(value, str) and value.startswith(("http://", "https://")):
+        return value
+    if isinstance(value, dict):
+        for key in ("media_url", "image_url", "url", "output"):
+            found = extract_media_url(value.get(key))
+            if found:
+                return found
+    if isinstance(value, list):
+        for item in value:
+            found = extract_media_url(item)
+            if found:
+                return found
+    return None
+
+
+def generate_pixazo_image(prompt, user_id):
+    if not PIXAZO_API_KEY:
+        raise HTTPException(503, "Pixazo is not configured. Add PIXAZO_API_KEY.")
+    check_quota(user_id, "pixazo")
+    try:
+        r = httpx.post(
+            "https://gateway.pixazo.ai/flux/text-to-image",
+            headers={"Content-Type": "application/json", "Cache-Control": "no-cache", "Ocp-Apim-Subscription-Key": PIXAZO_API_KEY},
+            json={"prompt": prompt},
+            timeout=90,
+        )
+    except httpx.HTTPError as exc:
+        raise HTTPException(502, "Pixazo image generation failed.") from exc
+    if r.status_code == 429:
+        raise HTTPException(429, "Pixazo is rate-limited right now.")
+    if r.status_code == 402:
+        raise HTTPException(402, "Pixazo reported insufficient balance.")
+    if r.status_code != 200:
+        raise HTTPException(502, "Pixazo image generation failed.")
+    try:
+        data = r.json()
+    except ValueError as exc:
+        raise HTTPException(502, "Pixazo returned an invalid response.") from exc
+    media_url = extract_media_url(data)
+    if not media_url:
+        raise HTTPException(502, "Pixazo did not return an image URL.")
+    record_usage(user_id, "pixazo", "image", "flux", 1)
+    return {"url": media_url, "model": "Flux"}
+
+
 def get_chat_session(session_id):
     if not session_id:
         raise HTTPException(401, "Sign in to community chat first.")
@@ -370,8 +417,27 @@ def health():
 def config():
     return {
         "models": [{"id": k, "label": v["label"], "configured": bool(clean_key(os.getenv(v["key"], "")))} for k, v in MODELS.items()],
-        "features": {"fast_search": bool(TAVILY_API_KEY), "deep_search": bool(EXA_API_KEY), "code": bool(clean_key(os.getenv("GROQ_API_KEY", ""))), "deep_think": True, "community_chat": bool(SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY)},
+        "features": {"fast_search": bool(TAVILY_API_KEY), "deep_search": bool(EXA_API_KEY), "code": bool(clean_key(os.getenv("GROQ_API_KEY", ""))), "deep_think": True, "image": bool(PIXAZO_API_KEY), "community_chat": bool(SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY)},
     }
+
+
+@app.get("/api/usage/global")
+def global_usage():
+    require_supabase()
+    providers = {}
+    for provider in DEFAULT_LIMITS:
+        today, month, active, _ = usage_counts("", provider)
+        daily, monthly = provider_limits(provider)
+        providers[provider] = {
+            "today": today,
+            "month": month,
+            "daily_limit": daily,
+            "monthly_limit": monthly,
+            "daily_remaining": max(0, daily - today),
+            "monthly_remaining": max(0, monthly - month),
+            "active_users": active,
+        }
+    return {"providers": providers, "note": "These are Render AI tracked requests across all users. Pixazo's real account balance is managed by Pixazo and is not exposed by this endpoint."}
 
 
 @app.get("/api/usage")
@@ -386,6 +452,18 @@ def usage(response: Response, render_ai_user: str | None = Cookie(default=None, 
         daily, monthly = provider_limits(provider)
         providers[provider] = {"today": today, "month": month, "daily_limit": daily, "monthly_limit": monthly, "user_today": user_today, "user_remaining": adaptive_remaining(uid, provider)}
     return {"providers": providers}
+
+
+@app.post("/api/image")
+def image_generate(body: AskRequest, response: Response, render_ai_user: str | None = Cookie(default=None, alias="__Host-render_ai_user")):
+    require_supabase()
+    if body.model not in MODELS:
+        raise HTTPException(400, "You must choose a model before chatting.")
+    uid = user_id_from_cookie(render_ai_user)
+    ensure_render_user(uid)
+    response.set_cookie("__Host-render_ai_user", signed_user_cookie(uid), max_age=31536000, httponly=True, samesite="strict", secure=IS_SECURE, path="/")
+    result = generate_pixazo_image(body.prompt, uid)
+    return {"answer": "Generated image", "image": result["url"], "provider": "pixazo", "model": result["model"]}
 
 
 @app.post("/api/ask")
