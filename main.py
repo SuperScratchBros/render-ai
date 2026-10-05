@@ -92,7 +92,7 @@ def supabase_count(table, filters):
     require_supabase()
     query = "&".join(f"{key}={value}" if str(value).startswith(("eq.", "gte.", "lte.", "gt.", "lt.")) else f"{key}=eq.{value}" for key, value in filters.items())
     try:
-        r = supabase_request("GET", f"{table}?select=id&{query}&limit=1", prefer="count=exact")
+        r = supabase_request("GET", f"{table}?select=*&{query}&limit=1", prefer="count=exact")
     except HTTPException:
         raise
     if r.status_code >= 300:
@@ -120,9 +120,9 @@ def ensure_render_user(user_id):
 
 def usage_counts(user_id, provider):
     now = datetime.now(timezone.utc)
-    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
-    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
-    active_start = (now - timedelta(hours=24)).isoformat()
+    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat().replace("+00:00", "Z")
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat().replace("+00:00", "Z")
+    active_start = (now - timedelta(hours=24)).isoformat().replace("+00:00", "Z")
     today = supabase_count("render_usage", {"provider": provider, "created_at": f"gte.{day_start}"})
     month = supabase_count("render_usage", {"provider": provider, "created_at": f"gte.{month_start}"})
     user_today = supabase_count("render_usage", {"provider": provider, "user_id": user_id, "created_at": f"gte.{day_start}"})
