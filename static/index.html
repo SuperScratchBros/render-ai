@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NLGEP AI</title>
+<style>
+*{box-sizing:border-box}
+html,body{margin:0;min-height:100%;background:#fff;color:#000;font-family:Arial,sans-serif}
+body{display:flex;justify-content:center;padding:32px 16px}
+.app{width:min(780px,100%)}
+h1{margin:0 0 4px;font-size:28px}
+.sub{margin-bottom:20px}
+select,button,textarea{font:16px Arial,sans-serif;color:#000;background:#fff;border:1px solid #000;border-radius:2px}
+select,button{padding:9px 12px}
+button{cursor:pointer}
+select:focus,button:focus-visible,textarea:focus{outline:2px solid #000;outline-offset:1px}
+.row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+.tool[aria-pressed="true"]{background:#000;color:#fff}
+.tool:disabled{opacity:.4;cursor:not-allowed}
+.hint{min-height:20px;font-size:14px;margin-bottom:10px}
+textarea{width:100%;min-height:140px;padding:12px;resize:vertical}
+.send{margin-top:8px;width:100%;font-weight:700}
+.send:disabled{opacity:.5;cursor:default}
+.status{margin-top:12px;min-height:22px}
+.answer{border:1px solid #000;padding:14px;margin-top:12px}
+.txt{white-space:pre-wrap;overflow-wrap:anywhere}
+.txt+.code,.code+.txt,.code+.code{margin-top:10px}
+.code{border:1px solid #000}
+.code .bar{display:flex;justify-content:space-between;align-items:center;padding:4px 8px;border-bottom:1px solid #000;font-size:13px}
+.code .bar button{padding:2px 8px;font-size:12px}
+.code pre{margin:0;padding:10px;overflow-x:auto;font:14px/1.45 Consolas,Menlo,monospace}
+.meta{margin-top:8px;font-size:13px}
+.sources{margin-top:10px}
+.sources a{display:block;color:#000;margin:4px 0;overflow-wrap:anywhere}
+</style>
+</head>
+<body>
+<main class="app">
+  <h1>NLGEP AI</h1>
+  <div class="sub">Pick a model, then turn on any tools you want.</div>
+
+  <div class="row"><select id="model" aria-label="Model"></select></div>
+
+  <div class="row" role="group" aria-label="Tools">
+    <button type="button" class="tool" data-tool="fast" aria-pressed="false">Fast Search</button>
+    <button type="button" class="tool" data-tool="deep" aria-pressed="false">Deep Search</button>
+    <button type="button" class="tool" data-tool="code" aria-pressed="false">Write Code</button>
+  </div>
+  <div class="hint" id="hint"></div>
+
+  <textarea id="prompt" placeholder="Ask anything..." aria-label="Your question"></textarea>
+  <button class="send" id="send" type="button">Send</button>
+
+  <div class="status" id="status" aria-live="polite"></div>
+  <div class="answer" id="answer" hidden></div>
+  <div class="meta" id="meta"></div>
+  <div class="sources" id="sources"></div>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const model = $('model'), promptEl = $('prompt'), send = $('send'), statusEl = $('status'),
+      out = $('answer'), meta = $('meta'), srcs = $('sources'), hint = $('hint');
+
+const tools = { fast: false, deep: false, code: false };
+const HINTS = {
+  fast: 'Fast Search: quick web results from Tavily.',
+  deep: 'Deep Search: multi-step research from Exa. Slower (up to about 30 seconds).',
+  code: 'Write Code: answers with Groq, whichever model is selected above.'
+};
+
+let saved = {};
+try { saved = JSON.parse(localStorage.getItem('nlgep-ai') || '{}'); } catch (e) {}
+const persist = () => { try { localStorage.setItem('nlgep-ai', JSON.stringify({ model: model.value, tools })); } catch (e) {} };
+
+function updateHint() {
+  hint.textContent = Object.keys(tools).filter(t => tools[t]).map(t => HINTS[t]).join(' ');
+}
+
+async function load() {
+  const r = await fetch('/api/config', { cache: 'no-store' });
+  if (!r.ok) throw new Error('config failed (' + r.status + ')');
+  const c = await r.json();
+
+  model.innerHTML = '';
+  c.models.forEach(m => {
+    const o = document.createElement('option');
+    o.value = m.id;
+    o.textContent = m.label + (m.configured ? '' : ' (not set up)');
+    o.disabled = !m.configured;
+    model.appendChild(o);
+  });
+  const ready = c.models.filter(m => m.configured);
+  model.value = (saved.model && ready.some(m => m.id === saved.model)) ? saved.model : (ready[0] || c.models[0]).id;
+  model.onchange = persist;
+
+  document.querySelectorAll('.tool').forEach(b => {
+    const t = b.dataset.tool, available = c.tools[t];
+    b.disabled = !available;
+    if (!available) b.title = 'Not set up on the server';
+    tools[t] = !!(available && saved.tools && saved.tools[t]);
+    b.setAttribute('aria-pressed', tools[t]);
+    b.onclick = () => { tools[t] = !tools[t]; b.setAttribute('aria-pressed', tools[t]); updateHint(); persist(); };
+  });
+  updateHint();
+}
+
+// Show text as text, and fenced code blocks as copyable code. Nothing is inserted as HTML.
+function render(text) {
+  out.textContent = '';
+  text.split('```').forEach((part, i) => {
+    if (i % 2 === 0) {
+      if (!part.trim()) return;
+      const p = document.createElement('div'); p.className = 'txt'; p.textContent = part.trim(); out.appendChild(p);
+      return;
+    }
+    const nl = part.indexOf('\n');
+    const lang = nl >= 0 ? part.slice(0, nl).trim() : '';
+    const code = (nl >= 0 ? part.slice(nl + 1) : part).replace(/\n$/, '');
+    const wrap = document.createElement('div'); wrap.className = 'code';
+    const bar = document.createElement('div'); bar.className = 'bar';
+    const label = document.createElement('span'); label.textContent = lang || 'code';
+    const copy = document.createElement('button'); copy.type = 'button'; copy.textContent = 'Copy';
+    copy.onclick = () => navigator.clipboard.writeText(code)
+      .then(() => { copy.textContent = 'Copied'; })
+      .catch(() => { copy.textContent = 'Copy failed'; })
+      .finally(() => setTimeout(() => { copy.textContent = 'Copy'; }, 1200));
+    bar.append(label, copy);
+    const pre = document.createElement('pre'), c = document.createElement('code'); c.textContent = code; pre.appendChild(c);
+    wrap.append(bar, pre); out.appendChild(wrap);
+  });
+  out.hidden = false;
+}
+
+async function ask() {
+  const p = promptEl.value.trim();
+  if (!p || send.disabled) return;
+  send.disabled = true; out.hidden = true; meta.textContent = ''; srcs.textContent = '';
+  statusEl.textContent = tools.deep ? 'Deep search can take up to 30 seconds...' : 'Thinking...';
+  const wake = setTimeout(() => { statusEl.textContent = 'Still working. The server may be waking up...'; }, 8000);
+  try {
+    const r = await fetch('/api/ask', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: model.value, prompt: p, fast: tools.fast, deep: tools.deep, code: tools.code })
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(typeof d.detail === 'string' ? d.detail : 'Request failed');
+    render(d.answer);
+    meta.textContent = 'Answered by ' + d.model + (d.notes.length ? ' | ' + d.notes.join(' | ') : '');
+    d.sources.forEach(s => {
+      const a = document.createElement('a');
+      a.href = s.url; a.target = '_blank'; a.rel = 'noopener noreferrer'; a.textContent = s.title;
+      srcs.appendChild(a);
+    });
+    statusEl.textContent = '';
+  } catch (e) {
+    statusEl.textContent = 'Error: ' + e.message;
+  } finally {
+    clearTimeout(wake); send.disabled = false;
+  }
+}
+
+send.onclick = ask;
+promptEl.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); ask(); } });
+load().catch(e => { statusEl.textContent = 'Error loading settings: ' + e.message; });
+promptEl.focus();
+</script>
+</body>
+</html>
