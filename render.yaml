@@ -17,7 +17,9 @@ services:
         sync: false
       - key: EXA_API_KEY
         sync: false
-      - key: DATABASE_URL
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
         sync: false
       - key: APP_SECRET_KEY
         sync: false
