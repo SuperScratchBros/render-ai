@@ -17,6 +17,8 @@ services:
         sync: false
       - key: EXA_API_KEY
         sync: false
+      - key: PIXAZO_API_KEY
+        sync: false
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_SERVICE_ROLE_KEY
@@ -51,3 +53,8 @@ services:
         value: "833"
       - key: PYTHON_VERSION
         value: 3.12.3
+
+      - key: PIXAZO_DAILY_LIMIT
+        value: "100"
+      - key: PIXAZO_MONTHLY_LIMIT
+        value: "2500"
