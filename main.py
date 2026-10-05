@@ -178,7 +178,7 @@ def supabase_count(table, filters):
     try:
         # Use GET because Supabase/PostgREST reliably includes Content-Range
         # for exact counts on normal table requests.
-        r = supabase_request("GET", f"{table}?select=id&{query}&limit=1", prefer="count=exact")
+        r = supabase_request("GET", f"{table}?select=*&{query}&limit=1", prefer="count=exact")
     except HTTPException:
         raise
     if r.status_code >= 300:
