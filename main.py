@@ -170,10 +170,15 @@ def require_supabase():
 
 def supabase_count(table, filters):
     require_supabase()
-    query = "&".join(f"{key}={value}" if str(value).startswith(("eq.", "gte.", "lte.", "gt.", "lt.")) else f"{key}=eq.{value}" for key, value in filters.items())
+    query = "&".join(
+        f"{key}={value}" if str(value).startswith(("eq.", "gte.", "lte.", "gt.", "lt."))
+        else f"{key}=eq.{value}"
+        for key, value in filters.items()
+    )
     try:
-        # HEAD + count=exact returns Content-Range without transferring row data.
-        r = supabase_request("HEAD", f"{table}?select=id&{query}&limit=1", prefer="count=exact")
+        # Use GET because Supabase/PostgREST reliably includes Content-Range
+        # for exact counts on normal table requests.
+        r = supabase_request("GET", f"{table}?select=id&{query}&limit=1", prefer="count=exact")
     except HTTPException:
         raise
     if r.status_code >= 300:
@@ -184,7 +189,10 @@ def supabase_count(table, filters):
             return int(content_range.split("/")[-1])
         except ValueError:
             pass
-    return 0
+    try:
+        return len(r.json()) if r.text else 0
+    except ValueError:
+        return 0
 
 def ensure_render_user(user_id):
     now = datetime.now(timezone.utc).isoformat()
