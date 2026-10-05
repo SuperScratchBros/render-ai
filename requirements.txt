@@ -1,6 +1,6 @@
 fastapi
 uvicorn
-jinja2
-requests
+httpx
+tavily-python
+psycopg[binary]
 exa-py
-groq
