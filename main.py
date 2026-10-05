@@ -457,20 +457,34 @@ def extract_media_url(value):
     return None
 
 
+PIXAZO_IMAGE_ENDPOINT = os.getenv(
+    "PIXAZO_IMAGE_ENDPOINT",
+    "https://gateway.pixazo.ai/flux-2-klein-4b/v1/generateImage",
+).strip()
+PIXAZO_IMAGE_MODEL = os.getenv("PIXAZO_IMAGE_MODEL", "flux-2-klein-4b").strip()
+
+
 def generate_pixazo_image(prompt, user_id):
     if not PIXAZO_API_KEY:
         raise HTTPException(503, "Pixazo is not configured. Add PIXAZO_API_KEY.")
     check_quota(user_id, "pixazo")
+
+    payload = {
+        "prompt": prompt,
+        "steps": 25,
+        "width": 1024,
+        "height": 1024,
+    }
     try:
         r = httpx.post(
-            "https://gateway.pixazo.ai/flux/text-to-image",
+            PIXAZO_IMAGE_ENDPOINT,
             headers={
                 "Content-Type": "application/json",
                 "Cache-Control": "no-cache",
                 "Ocp-Apim-Subscription-Key": PIXAZO_API_KEY,
             },
-            json={"prompt": prompt},
-            timeout=90,
+            json=payload,
+            timeout=120,
         )
     except httpx.HTTPError as exc:
         raise HTTPException(502, "Pixazo image generation failed: the Pixazo API could not be reached.") from exc
@@ -478,19 +492,22 @@ def generate_pixazo_image(prompt, user_id):
     if r.status_code == 401:
         raise HTTPException(502, "Pixazo rejected the API key (HTTP 401). Check PIXAZO_API_KEY in Render.")
     if r.status_code == 403:
-        raise HTTPException(502, "Pixazo denied this API request (HTTP 403). Check that the Pixazo API key has image-generation access.")
-    if r.status_code == 429:
-        raise HTTPException(429, "Pixazo is rate-limited right now.")
+        raise HTTPException(502, "Pixazo denied this API request (HTTP 403). Check that the API key has image-generation access.")
     if r.status_code == 402:
         raise HTTPException(402, "Pixazo reported insufficient balance.")
+    if r.status_code == 429:
+        raise HTTPException(429, "Pixazo is rate-limited right now.")
+    if r.status_code == 404:
+        raise HTTPException(
+            502,
+            f"Pixazo image endpoint was not found (HTTP 404). Current endpoint: {PIXAZO_IMAGE_ENDPOINT}. "
+            "Check PIXAZO_IMAGE_ENDPOINT or the image model enabled for your Pixazo account."
+        )
     if r.status_code < 200 or r.status_code >= 300:
         detail = (r.text or "").strip()
         if len(detail) > 500:
             detail = detail[:500] + "..."
-        raise HTTPException(
-            502,
-            f"Pixazo image generation failed (HTTP {r.status_code}). {detail or 'Pixazo returned no error details.'}"
-        )
+        raise HTTPException(502, f"Pixazo image generation failed (HTTP {r.status_code}). {detail or 'Pixazo returned no error details.'}")
 
     try:
         data = r.json()
@@ -499,11 +516,11 @@ def generate_pixazo_image(prompt, user_id):
 
     media_url = extract_media_url(data)
     if not media_url:
-        detail = json.dumps(data)[:700]
+        detail = json.dumps(data, ensure_ascii=False)[:900]
         raise HTTPException(502, f"Pixazo completed the request but returned no image URL. Response: {detail}")
 
-    record_usage(user_id, "pixazo", "image", "flux", 1)
-    return {"url": media_url, "model": "Flux"}
+    record_usage(user_id, "pixazo", "image", PIXAZO_IMAGE_MODEL, 1)
+    return {"url": media_url, "model": PIXAZO_IMAGE_MODEL}
 
 
 def get_chat_session(session_id):
