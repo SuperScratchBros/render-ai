@@ -19,6 +19,8 @@ services:
         sync: false
       - key: PIXAZO_API_KEY
         sync: false
+      - key: UPSTASH_BLOB_TOKEN
+        sync: false
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_SERVICE_ROLE_KEY
@@ -58,3 +60,5 @@ services:
         value: "100"
       - key: PIXAZO_MONTHLY_LIMIT
         value: "2500"
+      - key: BLOB_MAX_FILE_SIZE
+        value: "26214400"
