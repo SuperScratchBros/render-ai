@@ -60,5 +60,9 @@ services:
         value: "100"
       - key: PIXAZO_MONTHLY_LIMIT
         value: "2500"
+      - key: PIXAZO_IMAGE_ENDPOINT
+        value: https://gateway.pixazo.ai/flux-2-klein-4b/v1/generateImage
+      - key: PIXAZO_IMAGE_MODEL
+        value: flux-2-klein-4b
       - key: BLOB_MAX_FILE_SIZE
         value: "26214400"
