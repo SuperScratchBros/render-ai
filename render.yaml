@@ -15,5 +15,37 @@ services:
         sync: false
       - key: TAVILY_API_KEY
         sync: false
+      - key: EXA_API_KEY
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: APP_SECRET_KEY
+        sync: false
+      - key: GROQ_MODEL
+        value: openai/gpt-oss-120b
+      - key: GEMINI_MODEL
+        value: gemini-3.8-flash
+      - key: OPENROUTER_MODEL
+        value: openrouter/free
+      - key: GROQ_DAILY_LIMIT
+        value: "1000"
+      - key: GROQ_MONTHLY_LIMIT
+        value: "30000"
+      - key: GEMINI_DAILY_LIMIT
+        value: "20"
+      - key: GEMINI_MONTHLY_LIMIT
+        value: "600"
+      - key: OPENROUTER_DAILY_LIMIT
+        value: "50"
+      - key: OPENROUTER_MONTHLY_LIMIT
+        value: "1500"
+      - key: TAVILY_DAILY_LIMIT
+        value: "100"
+      - key: TAVILY_MONTHLY_LIMIT
+        value: "1000"
+      - key: EXA_DAILY_LIMIT
+        value: "25"
+      - key: EXA_MONTHLY_LIMIT
+        value: "833"
       - key: PYTHON_VERSION
         value: 3.12.3
