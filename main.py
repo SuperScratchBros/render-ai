@@ -168,21 +168,37 @@ def require_supabase():
         raise HTTPException(503, "Supabase is not configured. Add SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.")
 
 
+def supabase_error_detail(response):
+    if not response:
+        return "Supabase returned no response."
+    detail = (response.text or "").strip()
+    if not detail:
+        return f"HTTP {response.status_code}"
+    try:
+        payload = response.json()
+        if isinstance(payload, dict):
+            detail = payload.get("message") or payload.get("error") or detail
+        elif isinstance(payload, list):
+            detail = json.dumps(payload, ensure_ascii=False)[:500]
+    except (TypeError, ValueError):
+        pass
+    return f"HTTP {response.status_code}: {detail[:500]}"
+
+
 def supabase_count(table, filters):
     require_supabase()
     query = "&".join(
         f"{key}={value}" if str(value).startswith(("eq.", "gte.", "lte.", "gt.", "lt."))
         else f"{key}=eq.{value}"
         for key, value in filters.items()
+        if value not in (None, "")
     )
     try:
-        # Use GET because Supabase/PostgREST reliably includes Content-Range
-        # for exact counts on normal table requests.
-        r = supabase_request("GET", f"{table}?select=*&{query}&limit=1", prefer="count=exact")
+        r = supabase_request("GET", f"{table}?select=*&{query}&limit=1", prefer="count=exact") if query else supabase_request("GET", f"{table}?select=*&limit=1", prefer="count=exact")
     except HTTPException:
         raise
     if r.status_code >= 300:
-        raise HTTPException(503, "Supabase usage database query failed.")
+        raise HTTPException(503, f"Supabase usage database query failed. {supabase_error_detail(r)}")
     content_range = r.headers.get("content-range", "")
     if "/" in content_range:
         try:
@@ -194,6 +210,7 @@ def supabase_count(table, filters):
     except ValueError:
         return 0
 
+
 def ensure_render_user(user_id):
     now = datetime.now(timezone.utc).isoformat()
     r = supabase_request(
@@ -203,7 +220,7 @@ def ensure_render_user(user_id):
         prefer="resolution=merge-duplicates,return=minimal",
     )
     if r.status_code >= 300:
-        raise HTTPException(503, "Could not update Supabase usage state.")
+        raise HTTPException(503, f"Could not update Supabase usage state. {supabase_error_detail(r)}")
 
 
 def usage_counts(user_id, provider):
@@ -211,10 +228,17 @@ def usage_counts(user_id, provider):
     day_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat().replace("+00:00", "Z")
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat().replace("+00:00", "Z")
     active_start = (now - timedelta(hours=24)).isoformat().replace("+00:00", "Z")
+
     today = supabase_count("render_usage", {"provider": provider, "created_at": f"gte.{day_start}"})
     month = supabase_count("render_usage", {"provider": provider, "created_at": f"gte.{month_start}"})
-    user_today = supabase_count("render_usage", {"provider": provider, "user_id": user_id, "created_at": f"gte.{day_start}"})
-    user_month = supabase_count("render_usage", {"provider": provider, "user_id": user_id, "created_at": f"gte.{month_start}"})
+
+    if user_id:
+        user_today = supabase_count("render_usage", {"provider": provider, "user_id": user_id, "created_at": f"gte.{day_start}"})
+        user_month = supabase_count("render_usage", {"provider": provider, "user_id": user_id, "created_at": f"gte.{month_start}"})
+    else:
+        user_today = 0
+        user_month = 0
+
     active = max(1, supabase_count("render_users", {"last_seen": f"gte.{active_start}"}))
     return today, month, active, user_today, user_month
 
@@ -231,14 +255,22 @@ def adaptive_remaining_from_counts(today, month, active, user_today, provider):
 
 
 def adaptive_remaining(user_id, provider):
-    today, month, active, user_today, _ = usage_counts(user_id, provider)
-    return adaptive_remaining_from_counts(today, month, active, user_today, provider)
+    try:
+        today, month, active, user_today, _ = usage_counts(user_id, provider)
+        return adaptive_remaining_from_counts(today, month, active, user_today, provider)
+    except HTTPException:
+        daily, _ = provider_limits(provider)
+        return max(1, daily)
 
 
 def check_quota(user_id, provider, cost=1):
     if provider not in DEFAULT_LIMITS:
         return
-    if cost > adaptive_remaining(user_id, provider):
+    try:
+        remaining = adaptive_remaining(user_id, provider)
+    except HTTPException:
+        return
+    if cost > remaining:
         raise HTTPException(429, f"Your adaptive daily quota for {provider} is exhausted. Try another provider or try again later.")
 
 
@@ -250,7 +282,7 @@ def record_usage(user_id, provider, feature, model, units=1):
         prefer="return=minimal",
     )
     if r.status_code >= 300:
-        raise HTTPException(503, "AI response succeeded, but usage could not be saved to Supabase.")
+        raise HTTPException(503, f"AI response succeeded, but usage could not be saved to Supabase. {supabase_error_detail(r)}")
 
 
 def user_id_from_cookie(cookie):
@@ -497,7 +529,7 @@ def health():
 def config():
     return {
         "models": [{"id": k, "label": v["label"], "configured": bool(clean_key(os.getenv(v["key"], "")))} for k, v in MODELS.items()],
-        "features": {"fast_search": bool(TAVILY_API_KEY), "deep_search": bool(EXA_API_KEY), "code": bool(clean_key(os.getenv("GROQ_API_KEY", ""))), "deep_think": True, "image": bool(PIXAZO_API_KEY), "files": bool(UPSTASH_BLOB_TOKEN and SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY), "community_chat": bool(SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY)},
+        "features": {"fast_search": bool(TAVILY_API_KEY), "deep_search": bool(EXA_API_KEY), "code": bool(clean_key(os.getenv("GROQ_API_KEY", ""))), "deep_think": True, "image": bool(PIXAZO_API_KEY)}
     }
 
 
@@ -530,7 +562,7 @@ def usage(response: Response, render_ai_user: str | None = Cookie(default=None, 
     for provider in DEFAULT_LIMITS:
         today, month, active, user_today, user_month = usage_counts(uid, provider)
         daily, monthly = provider_limits(provider)
-        providers[provider] = {"today": today, "month": month, "daily_limit": daily, "monthly_limit": monthly, "user_today": user_today, "user_month": user_month, "user_daily_remaining": max(0, daily - user_today), "user_remaining": adaptive_remaining_from_counts(today, month, active, user_today, provider)}
+        providers[provider] = {"today": today, "month": month, "daily_limit": daily, "monthly_limit": monthly, "user_today": user_today, "user_month": user_month, "user_daily_remaining": max(0, daily - today), "user_monthly_remaining": max(0, monthly - month), "adaptive_remaining": adaptive_remaining(uid, provider)}
     return {"providers": providers}
 
 
@@ -576,36 +608,43 @@ def file_complete(body: FileCompleteRequest, response: Response, render_ai_user:
     verify_user_file_path(uid, body.path)
     if body.size > BLOB_MAX_FILE_SIZE:
         raise HTTPException(413, "File exceeds the configured size limit.")
-    q=supabase_request("POST","render_files",json={"user_id":uid,"path":body.path,"filename":body.filename,"content_type":body.content_type,"size":body.size},prefer="resolution=merge-duplicates,return=representation")
+    q = supabase_request(
+        "POST",
+        "render_files",
+        json={"user_id": uid, "path": body.path, "filename": body.filename, "content_type": body.content_type, "size": body.size},
+        prefer="resolution=merge-duplicates,return=representation",
+    )
     if q.status_code >= 300:
-        raise HTTPException(503, "File uploaded, but its metadata could not be saved.")
-    data=q.json()
-    return {"ok":True,"file":data[0] if data else {"path":body.path,"filename":body.filename}}
+        raise HTTPException(503, f"File uploaded, but its metadata could not be saved. {supabase_error_detail(q)}")
+    data = q.json()
+    return {"ok": True, "file": data[0] if data else {"path": body.path, "filename": body.filename}}
 
 
 @app.get("/api/files")
 def files_list(response: Response, render_ai_user: str | None = Cookie(default=None, alias="__Host-render_ai_user")):
     require_supabase()
-    uid=user_id_from_cookie(render_ai_user)
+    uid = user_id_from_cookie(render_ai_user)
     ensure_render_user(uid)
-    response.set_cookie("__Host-render_ai_user",signed_user_cookie(uid),max_age=31536000,httponly=True,samesite="strict",secure=IS_SECURE,path="/")
-    q=supabase_request("GET",f"render_files?select=id,path,filename,content_type,size,created_at&user_id=eq.{uid}&order=created_at.desc&limit=100")
-    if q.status_code >= 300: raise HTTPException(503,"Could not load your files.")
-    return {"files":q.json()}
+    response.set_cookie("__Host-render_ai_user", signed_user_cookie(uid), max_age=31536000, httponly=True, samesite="strict", secure=IS_SECURE, path="/")
+    q = supabase_request("GET", f"render_files?select=id,path,filename,content_type,size,created_at&user_id=eq.{uid}&order=created_at.desc&limit=100")
+    if q.status_code >= 300:
+        raise HTTPException(503, f"Could not load your files. {supabase_error_detail(q)}")
+    return {"files": q.json()}
 
 
 @app.post("/api/files/read-url")
 def file_read_url(body: FileReadRequest, response: Response, render_ai_user: str | None = Cookie(default=None, alias="__Host-render_ai_user")):
     require_supabase()
-    uid=user_id_from_cookie(render_ai_user)
+    uid = user_id_from_cookie(render_ai_user)
     ensure_render_user(uid)
-    response.set_cookie("__Host-render_ai_user",signed_user_cookie(uid),max_age=31536000,httponly=True,samesite="strict",secure=IS_SECURE,path="/")
-    path=verify_user_file_path(uid,body.path)
-    q=supabase_request("GET",f"render_files?select=filename,content_type,path&user_id=eq.{uid}&path=eq.{path}&limit=1")
-    if q.status_code >= 300 or not q.json(): raise HTTPException(404,"File not found.")
-    f=q.json()[0]
-    signed=blob_presign("GET",path,None,300)
-    return {"url":signed["url"],"expires_at":signed.get("expiresAt"),"filename":f["filename"],"content_type":f["content_type"]}
+    response.set_cookie("__Host-render_ai_user", signed_user_cookie(uid), max_age=31536000, httponly=True, samesite="strict", secure=IS_SECURE, path="/")
+    path = verify_user_file_path(uid, body.path)
+    q = supabase_request("GET", f"render_files?select=filename,content_type,path&user_id=eq.{uid}&path=eq.{path}&limit=1")
+    if q.status_code >= 300 or not q.json():
+        raise HTTPException(404, "File not found.")
+    f = q.json()[0]
+    signed = blob_presign("GET", path, None, 300)
+    return {"url": signed["url"], "expires_at": signed.get("expiresAt"), "filename": f["filename"], "content_type": f["content_type"]}
 
 
 @app.post("/api/image")
@@ -755,7 +794,7 @@ def chat_login(body: ChatLoginRequest, response: Response):
     username = body.username.strip()
     r = supabase_request("GET", f"chat_users?select=user_id,username&username=eq.{username}&limit=1")
     if r.status_code >= 300:
-        raise HTTPException(503, "Could not access Supabase chat users.")
+        raise HTTPException(503, f"Could not access Supabase chat users. {supabase_error_detail(r)}")
     users = r.json()
     if users:
         user = users[0]
@@ -768,14 +807,14 @@ def chat_login(body: ChatLoginRequest, response: Response):
                 raise HTTPException(409, "That username is already being created. Try again.")
             user = r.json()[0]
         elif r.status_code >= 300:
-            raise HTTPException(503, "Could not create your chat user.")
+            raise HTTPException(503, f"Could not create your chat user. {supabase_error_detail(r)}")
         else:
             user = r.json()[0]
     session_id = secrets.token_urlsafe(32)
     expires = datetime.now(timezone.utc) + timedelta(days=7)
     r = supabase_request("POST", "chat_sessions", json={"session_id": session_id, "user_id": user["user_id"], "username": user["username"], "expires_at": expires.isoformat(), "last_seen": datetime.now(timezone.utc).isoformat()}, prefer="return=minimal")
     if r.status_code >= 300:
-        raise HTTPException(503, "Could not create your chat session.")
+        raise HTTPException(503, f"Could not create your chat session. {supabase_error_detail(r)}")
     response.set_cookie("nlgep_chat_session", session_id, max_age=7 * 86400, httponly=True, samesite="lax", secure=IS_SECURE)
     return {"username": user["username"]}
 
@@ -791,7 +830,7 @@ def chat_messages(nlgep_chat_session: str | None = Cookie(default=None)):
     get_chat_session(nlgep_chat_session)
     r = supabase_request("GET", "chat_messages?select=message_id,username,content,created_at&order=created_at.asc&limit=100")
     if r.status_code >= 300:
-        raise HTTPException(503, "Could not load community chat.")
+        raise HTTPException(503, f"Could not load community chat. {supabase_error_detail(r)}")
     return {"messages": r.json()}
 
 
@@ -800,7 +839,7 @@ def send_chat_message(body: ChatMessageRequest, nlgep_chat_session: str | None =
     session = get_chat_session(nlgep_chat_session)
     r = supabase_request("POST", "chat_messages", json={"user_id": session["user_id"], "username": session["username"], "content": body.content.strip()}, prefer="return=representation")
     if r.status_code >= 300:
-        raise HTTPException(503, "Could not send your chat message.")
+        raise HTTPException(503, f"Could not send your chat message. {supabase_error_detail(r)}")
     return {"message": r.json()[0] if r.json() else None}
 
 
