@@ -7,5 +7,15 @@ create table if not exists public.render_files (
   size bigint not null check (size > 0),
   created_at timestamptz not null default now()
 );
-create index if not exists render_files_user_created_idx on public.render_files(user_id, created_at desc);
+
+create index if not exists render_files_user_created_idx
+  on public.render_files(user_id, created_at desc);
+
 alter table public.render_files enable row level security;
+
+-- Render AI accesses this table through the server-side Supabase service_role key.
+grant all privileges on table public.render_files to service_role;
+grant all privileges on sequence public.render_files_id_seq to service_role;
+
+-- Make the newly created table visible to PostgREST immediately.
+notify pgrst, 'reload schema';
