@@ -91,7 +91,33 @@ def env_int(name, default):
         return default
 
 
-DEFAULT_LIMITS = {"groq": (1000, 30000), "gemini": (20, 600), "openrouter": (50, 1500), "tavily": (100, 1000), "exa": (25, 833), "cloudflare": (100, 3000)}
+DEFAULT_LIMITS = {"groq": (900, 27000), "gemini": (18, 540), "openrouter": (45, 1350), "tavily": (100, 1000), "exa": (20, 600), "cloudflare": (90, 2700)}
+
+USER_DAILY_LIMITS = {
+    "groq": 10,
+    "gemini": 4,
+    "openrouter": 10,
+    "tavily": 5,
+    "exa": 3,
+    "cloudflare": 3,
+}
+
+USER_PER_MINUTE_LIMITS = {
+    "groq": 3,
+    "gemini": 2,
+    "openrouter": 3,
+    "tavily": 2,
+    "exa": 1,
+    "cloudflare": 1,
+}
+
+def user_daily_limit(provider):
+    return env_int(f"{provider.upper()}_USER_DAILY_LIMIT", USER_DAILY_LIMITS.get(provider, 1))
+
+
+def user_per_minute_limit(provider):
+    return env_int(f"{provider.upper()}_USER_PER_MINUTE_LIMIT", USER_PER_MINUTE_LIMITS.get(provider, 1))
+
 
 
 def safe_blob_filename(filename):
@@ -257,23 +283,39 @@ def adaptive_remaining_from_counts(today, month, active, user_today, provider):
 
 
 def adaptive_remaining(user_id, provider):
-    try:
-        today, month, active, user_today, _ = usage_counts(user_id, provider)
-        return adaptive_remaining_from_counts(today, month, active, user_today, provider)
-    except HTTPException:
-        daily, _ = provider_limits(provider)
-        return max(1, daily)
+    today, month, active, user_today, _ = usage_counts(user_id, provider)
+    return adaptive_remaining_from_counts(today, month, active, user_today, provider)
 
 
 def check_quota(user_id, provider, cost=1):
     if provider not in DEFAULT_LIMITS:
         return
-    try:
-        remaining = adaptive_remaining(user_id, provider)
-    except HTTPException:
-        return
-    if cost > remaining:
-        raise HTTPException(429, f"Your adaptive daily quota for {provider} is exhausted. Try another provider or try again later.")
+
+    today, month, active, user_today, user_month = usage_counts(user_id, provider)
+
+    hard_daily = user_daily_limit(provider)
+    hard_daily_remaining = max(0, hard_daily - user_today)
+    adaptive = adaptive_remaining_from_counts(today, month, active, user_today, provider)
+    effective_remaining = min(hard_daily_remaining, adaptive)
+
+    if cost > effective_remaining:
+        raise HTTPException(
+            429,
+            f"Your {provider} limit is exhausted for today. You have {effective_remaining} request(s) remaining."
+        )
+
+    minute_start = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat().replace("+00:00", "Z")
+    recent = supabase_count("render_usage", {
+        "provider": provider,
+        "user_id": user_id,
+        "created_at": f"gte.{minute_start}",
+    })
+    per_minute = user_per_minute_limit(provider)
+    if recent + cost > per_minute:
+        raise HTTPException(
+            429,
+            f"Too many {provider} requests in a short period. Limit: {per_minute} per minute."
+        )
 
 
 def record_usage(user_id, provider, feature, model, units=1):
@@ -558,7 +600,28 @@ def usage(response: Response, render_ai_user: str | None = Cookie(default=None, 
     for provider in DEFAULT_LIMITS:
         today, month, active, user_today, user_month = usage_counts(uid, provider)
         daily, monthly = provider_limits(provider)
-        providers[provider] = {"today": today, "month": month, "daily_limit": daily, "monthly_limit": monthly, "user_today": user_today, "user_month": user_month, "user_daily_remaining": max(0, daily - today), "user_monthly_remaining": max(0, monthly - month), "adaptive_remaining": adaptive_remaining(uid, provider)}
+        hard_daily = user_daily_limit(provider)
+        days_in_month = calendar.monthrange(datetime.now(timezone.utc).year, datetime.now(timezone.utc).month)[1]
+        hard_monthly = hard_daily * days_in_month
+        hard_daily_remaining = max(0, hard_daily - user_today)
+        hard_monthly_remaining = max(0, hard_monthly - user_month)
+        adaptive = adaptive_remaining_from_counts(today, month, active, user_today, provider)
+        effective_remaining = min(hard_daily_remaining, adaptive)
+        providers[provider] = {
+            "today": today,
+            "month": month,
+            "daily_limit": daily,
+            "monthly_limit": monthly,
+            "user_today": user_today,
+            "user_month": user_month,
+            "user_daily_limit": hard_daily,
+            "user_monthly_limit": hard_monthly,
+            "user_daily_remaining": hard_daily_remaining,
+            "user_monthly_remaining": hard_monthly_remaining,
+            "user_remaining": effective_remaining,
+            "adaptive_remaining": adaptive,
+            "per_minute_limit": user_per_minute_limit(provider),
+        }
     return {"providers": providers}
 
 
