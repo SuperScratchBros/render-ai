@@ -35,26 +35,27 @@ services:
         value: gemini-3.8-flash
       - key: OPENROUTER_MODEL
         value: openrouter/free
+      # App-wide provider safety caps (below the current published free/API allowances)
       - key: GROQ_DAILY_LIMIT
-        value: "1000"
+        value: "900"
       - key: GROQ_MONTHLY_LIMIT
-        value: "30000"
+        value: "27000"
       - key: GEMINI_DAILY_LIMIT
-        value: "20"
+        value: "18"
       - key: GEMINI_MONTHLY_LIMIT
-        value: "600"
+        value: "540"
       - key: OPENROUTER_DAILY_LIMIT
-        value: "50"
+        value: "45"
       - key: OPENROUTER_MONTHLY_LIMIT
-        value: "1500"
+        value: "1350"
       - key: TAVILY_DAILY_LIMIT
         value: "100"
       - key: TAVILY_MONTHLY_LIMIT
         value: "1000"
       - key: EXA_DAILY_LIMIT
-        value: "25"
+        value: "20"
       - key: EXA_MONTHLY_LIMIT
-        value: "833"
+        value: "600"
       - key: PYTHON_VERSION
         value: 3.12.3
 
@@ -64,5 +65,29 @@ services:
         value: "2700"
       - key: CLOUDFLARE_IMAGE_MODEL
         value: "@cf/black-forest-labs/flux-2-klein-4b"
+      - key: GROQ_USER_DAILY_LIMIT
+        value: "10"
+      - key: GROQ_USER_PER_MINUTE_LIMIT
+        value: "3"
+      - key: GEMINI_USER_DAILY_LIMIT
+        value: "4"
+      - key: GEMINI_USER_PER_MINUTE_LIMIT
+        value: "2"
+      - key: OPENROUTER_USER_DAILY_LIMIT
+        value: "10"
+      - key: OPENROUTER_USER_PER_MINUTE_LIMIT
+        value: "3"
+      - key: TAVILY_USER_DAILY_LIMIT
+        value: "5"
+      - key: TAVILY_USER_PER_MINUTE_LIMIT
+        value: "2"
+      - key: EXA_USER_DAILY_LIMIT
+        value: "3"
+      - key: EXA_USER_PER_MINUTE_LIMIT
+        value: "1"
+      - key: CLOUDFLARE_USER_DAILY_LIMIT
+        value: "3"
+      - key: CLOUDFLARE_USER_PER_MINUTE_LIMIT
+        value: "1"
       - key: BLOB_MAX_FILE_SIZE
         value: "26214400"
