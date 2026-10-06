@@ -27,7 +27,7 @@ TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "").strip()
 EXA_API_KEY = os.getenv("EXA_API_KEY", "").strip()
 CLOUDFLARE_API_TOKEN = os.getenv("CLOUDFLARE_API_TOKEN", "").strip()
 CLOUDFLARE_ACCOUNT_ID = os.getenv("CLOUDFLARE_ACCOUNT_ID", "").strip()
-CLOUDFLARE_IMAGE_MODEL = os.getenv("CLOUDFLARE_IMAGE_MODEL", "@cf/black-forest-labs/flux-1-schnell").strip()
+CLOUDFLARE_IMAGE_MODEL = os.getenv("CLOUDFLARE_IMAGE_MODEL", "@cf/black-forest-labs/flux-2-klein-4b").strip()
 UPSTASH_BLOB_TOKEN = os.getenv("UPSTASH_BLOB_TOKEN", "").strip()
 BLOB_MAX_FILE_SIZE = max(1, int(os.getenv("BLOB_MAX_FILE_SIZE", str(25 * 1024 * 1024)))) if os.getenv("BLOB_MAX_FILE_SIZE", "").strip().isdigit() else 25 * 1024 * 1024
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip().rstrip("/")
@@ -461,22 +461,17 @@ def extract_media_url(value):
 
 def generate_cloudflare_image(prompt, user_id):
     if len(prompt) > 2048:
-        raise HTTPException(400, "Image prompts can be at most 2048 characters for the selected Cloudflare model.")
+        raise HTTPException(400, "Image prompts can be at most 2048 characters.")
     if not CLOUDFLARE_API_TOKEN or not CLOUDFLARE_ACCOUNT_ID:
         raise HTTPException(503, "Cloudflare Workers AI is not configured. Add CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID.")
     check_quota(user_id, "cloudflare")
 
     endpoint = f"https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai/run/{CLOUDFLARE_IMAGE_MODEL}"
-    payload = {"prompt": prompt, "steps": 4}
-
     try:
         r = httpx.post(
             endpoint,
-            headers={
-                "Authorization": f"Bearer {CLOUDFLARE_API_TOKEN}",
-                "Content-Type": "application/json",
-            },
-            json=payload,
+            headers={"Authorization": f"Bearer {CLOUDFLARE_API_TOKEN}"},
+            files={"prompt": (None, prompt), "width": (None, "768"), "height": (None, "768")},
             timeout=120,
         )
     except httpx.HTTPError as exc:
@@ -485,7 +480,7 @@ def generate_cloudflare_image(prompt, user_id):
     if r.status_code == 401:
         raise HTTPException(502, "Cloudflare rejected the API token (HTTP 401). Check CLOUDFLARE_API_TOKEN in Render.")
     if r.status_code == 403:
-        raise HTTPException(502, "Cloudflare denied the Workers AI request (HTTP 403). Check the token has Workers AI Read/Write permissions.")
+        raise HTTPException(502, "Cloudflare denied the Workers AI request (HTTP 403). Check the token has Workers AI image-generation access.")
     if r.status_code == 429:
         raise HTTPException(429, "Cloudflare Workers AI is rate-limited right now.")
     if r.status_code < 200 or r.status_code >= 300:
