@@ -59,10 +59,10 @@ services:
         value: 3.12.3
 
       - key: CLOUDFLARE_DAILY_LIMIT
-        value: "100"
+        value: "90"
       - key: CLOUDFLARE_MONTHLY_LIMIT
-        value: "3000"
+        value: "2700"
       - key: CLOUDFLARE_IMAGE_MODEL
-        value: "@cf/black-forest-labs/flux-1-schnell"
+        value: "@cf/black-forest-labs/flux-2-klein-4b"
       - key: BLOB_MAX_FILE_SIZE
         value: "26214400"
