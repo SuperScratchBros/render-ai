@@ -40,6 +40,11 @@ services:
         value: openrouter/free
       - key: XKIRO_BASE_URL
         value: https://api.xkiro.com/v1
+      - key: XKIRO_IMAGE_MODEL
+        value: sensenova/sensenova-u1.5-lite
+      # Which image engine is selected by default: cloudflare or xkiro (users can switch in the UI)
+      - key: IMAGE_DEFAULT_PROVIDER
+        value: cloudflare
       # App-wide provider safety caps (below the current published free/API allowances)
       - key: GROQ_DAILY_LIMIT
         value: "900"
@@ -57,6 +62,10 @@ services:
         value: "200"
       - key: XKIRO_MONTHLY_LIMIT
         value: "6000"
+      - key: XKIRO_IMAGE_DAILY_LIMIT
+        value: "60"
+      - key: XKIRO_IMAGE_MONTHLY_LIMIT
+        value: "1800"
       - key: TAVILY_DAILY_LIMIT
         value: "100"
       - key: TAVILY_MONTHLY_LIMIT
@@ -90,6 +99,10 @@ services:
         value: "15"
       - key: XKIRO_USER_PER_MINUTE_LIMIT
         value: "3"
+      - key: XKIRO_IMAGE_USER_DAILY_LIMIT
+        value: "3"
+      - key: XKIRO_IMAGE_USER_PER_MINUTE_LIMIT
+        value: "1"
       - key: TAVILY_USER_DAILY_LIMIT
         value: "5"
       - key: TAVILY_USER_PER_MINUTE_LIMIT
