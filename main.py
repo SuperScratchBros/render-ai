@@ -20,14 +20,31 @@ from tavily import TavilyClient
 
 BASE_DIR = Path(__file__).parent
 XKIRO_BASE_URL = (os.getenv("XKIRO_BASE_URL", "").strip() or "https://api.xkiro.com/v1").rstrip("/")
+XKIRO_FREE_IMAGE_FALLBACK = "sensenova/sensenova-u1.5-lite"  # xKiro's documented free-tier image model
+IMAGE_DEFAULT_PROVIDER = os.getenv("IMAGE_DEFAULT_PROVIDER", "cloudflare").strip().lower()
+if IMAGE_DEFAULT_PROVIDER not in {"cloudflare", "xkiro"}:
+    IMAGE_DEFAULT_PROVIDER = "cloudflare"
 MODELS = {
     "groq": {"label": "OpenAI GPT-OSS 120B via Groq", "model": os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"), "url": "https://api.groq.com/openai/v1/chat/completions", "key": "GROQ_API_KEY"},
     "gemini": {"label": "Gemini: 3.8 Flash", "model": os.getenv("GEMINI_MODEL", "gemini-3.8-flash"), "url": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", "key": "GEMINI_API_KEY"},
     "openrouter": {"label": "OpenRouter: Mixed", "model": os.getenv("OPENROUTER_MODEL", "openrouter/free"), "url": "https://openrouter.ai/api/v1/chat/completions", "key": "OPENROUTER_API_KEY"},
-    # xKiro is a multi-model gateway. "model" is only the optional default (XKIRO_MODEL);
-    # the person can pick any model from xKiro's live catalog in the UI.
-    "xkiro": {"label": "xKiro: 90+ models", "model": os.getenv("XKIRO_MODEL", "").strip(), "url": f"{XKIRO_BASE_URL}/chat/completions", "key": "XKIRO_API_KEY"},
+    # xKiro is a multi-model gateway. Only its FREE models are offered. "model" is the optional
+    # default (XKIRO_MODEL); the person can pick any free model from xKiro's live catalog in the UI.
+    "xkiro": {"label": "xKiro: free models", "model": os.getenv("XKIRO_MODEL", "").strip(), "url": f"{XKIRO_BASE_URL}/chat/completions", "key": "XKIRO_API_KEY"},
 }
+
+# Friendly names + groupings used by the usage dashboard.
+PROVIDER_META = {
+    "groq": ("Groq · GPT-OSS 120B", "chat"),
+    "gemini": ("Google Gemini", "chat"),
+    "openrouter": ("OpenRouter", "chat"),
+    "xkiro": ("xKiro · free chat models", "chat"),
+    "tavily": ("Tavily · fast search", "search"),
+    "exa": ("Exa · deep search", "search"),
+    "cloudflare": ("Cloudflare · FLUX images", "image"),
+    "xkiro_image": ("xKiro · free image model", "image"),
+}
+
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "").strip()
 EXA_API_KEY = os.getenv("EXA_API_KEY", "").strip()
 CLOUDFLARE_API_TOKEN = os.getenv("CLOUDFLARE_API_TOKEN", "").strip()
@@ -50,6 +67,7 @@ class AskRequest(BaseModel):
     mode: str = Field(default="chat", pattern="^(chat|fast-search|deep-search|code|deep-think|image)$")
     history: list[dict] = Field(default_factory=list, max_length=20)
     xkiro_model: str | None = Field(default=None, max_length=120)
+    image_provider: str = Field(default="cloudflare", pattern="^(cloudflare|xkiro)$")
 
 
 class ChatLoginRequest(BaseModel):
@@ -68,10 +86,12 @@ def clean_key(value: str) -> str:
 
 
 _xkiro_cache = {"at": 0.0, "models": []}
+_xkiro_image_cache = {"at": 0.0, "models": []}
+_xkiro_usage_cache = {"at": 0.0, "data": None}
 
 
 def xkiro_catalog():
-    """Chat-model catalog from xKiro (public endpoint, cached for 5 minutes)."""
+    """FREE chat models from xKiro's public catalog, cached for 5 minutes."""
     now = time.time()
     if _xkiro_cache["models"] and now - _xkiro_cache["at"] < 300:
         return _xkiro_cache["models"]
@@ -80,15 +100,18 @@ def xkiro_catalog():
         if r.status_code == 200:
             models = []
             for m in r.json().get("data", []):
-                if isinstance(m, dict) and isinstance(m.get("id"), str) and m["id"]:
-                    models.append({
-                        "id": m["id"],
-                        "label": m.get("display_name") or m["id"],
-                        "owned_by": m.get("owned_by"),
-                        "access_tier": m.get("access_tier") or "paid",
-                        "context_length": m.get("context_length"),
-                        "capabilities": m.get("capabilities") or {},
-                    })
+                if not (isinstance(m, dict) and isinstance(m.get("id"), str) and m["id"]):
+                    continue
+                if m.get("access_tier") != "free":
+                    continue  # free models only
+                models.append({
+                    "id": m["id"],
+                    "label": m.get("display_name") or m["id"],
+                    "owned_by": m.get("owned_by"),
+                    "access_tier": "free",
+                    "context_length": m.get("context_length"),
+                    "capabilities": m.get("capabilities") or {},
+                })
             if models:
                 _xkiro_cache.update(at=now, models=models)
                 return models
@@ -98,7 +121,7 @@ def xkiro_catalog():
 
 
 def resolve_model(provider, requested=None):
-    """Return the exact model ID to send. For xKiro, validate it against the live catalog."""
+    """Return the exact model ID to send. For xKiro, it must be a FREE model from the live catalog."""
     cfg = MODELS[provider]
     if provider != "xkiro":
         return cfg["model"]
@@ -107,20 +130,54 @@ def resolve_model(provider, requested=None):
     requested = (requested or "").strip() or cfg["model"]
     if not requested:
         if not ids:
-            raise HTTPException(503, "Could not load the xKiro model list. Try again shortly or set XKIRO_MODEL.")
-        free = [m["id"] for m in catalog if m.get("access_tier") == "free"]
-        return (free or ids)[0]
+            raise HTTPException(503, "Could not load the xKiro free-model list. Try again shortly.")
+        return ids[0]
     if ids and requested not in ids:
-        raise HTTPException(400, f"xKiro has no model called '{requested}'. Pick one from the model list.")
+        raise HTTPException(400, f"xKiro has no free model called '{requested}'. Pick one from the model list.")
+    if not ids:
+        raise HTTPException(503, "Could not verify that this xKiro model is free. Try again shortly.")
     return requested
+
+
+def xkiro_image_models():
+    """FREE image model IDs from xKiro's catalog, cached for 5 minutes."""
+    now = time.time()
+    if _xkiro_image_cache["models"] and now - _xkiro_image_cache["at"] < 300:
+        return _xkiro_image_cache["models"]
+    try:
+        r = httpx.get(f"{XKIRO_BASE_URL}/models", params={"modality": "image"}, timeout=10)
+        if r.status_code == 200:
+            ids = [m["id"] for m in r.json().get("data", [])
+                   if isinstance(m, dict) and isinstance(m.get("id"), str) and m.get("access_tier") == "free"]
+            if ids:
+                _xkiro_image_cache.update(at=now, models=ids)
+                return ids
+    except (httpx.HTTPError, ValueError, AttributeError):
+        pass
+    return _xkiro_image_cache["models"]
+
+
+def resolve_xkiro_image_model():
+    ids = xkiro_image_models()
+    configured = os.getenv("XKIRO_IMAGE_MODEL", "").strip()
+    if ids:
+        if configured and configured not in ids:
+            raise HTTPException(503, "XKIRO_IMAGE_MODEL is not a free xKiro image model.")
+        return configured or ids[0]
+    # Catalog unavailable (or has no tier info): only the documented free model is allowed.
+    if configured and configured != XKIRO_FREE_IMAGE_FALLBACK:
+        raise HTTPException(503, "Could not verify that XKIRO_IMAGE_MODEL is free. Try again shortly.")
+    return XKIRO_FREE_IMAGE_FALLBACK
 
 
 def provider_error_message(provider, status, model_name):
     if provider == "xkiro":
         if status == 401:
             return "xKiro rejected the API key. Check XKIRO_API_KEY in Render."
+        if status == 402:
+            return "xKiro's free allowance looks used up for today."
         if status in {400, 403, 404}:
-            return f"xKiro would not run '{model_name}' (HTTP {status}). The model may be unavailable or need a paid/deposited xKiro account."
+            return f"xKiro would not run '{model_name}' (HTTP {status}). The model may be unavailable right now."
     return "The selected AI provider returned an error."
 
 
@@ -154,13 +211,14 @@ def env_int(name, default):
         return default
 
 
-DEFAULT_LIMITS = {"groq": (900, 27000), "gemini": (18, 540), "openrouter": (45, 1350), "xkiro": (200, 6000), "tavily": (100, 1000), "exa": (20, 600), "cloudflare": (90, 2700)}
+DEFAULT_LIMITS = {"groq": (900, 27000), "gemini": (18, 540), "openrouter": (45, 1350), "xkiro": (200, 6000), "xkiro_image": (60, 1800), "tavily": (100, 1000), "exa": (20, 600), "cloudflare": (90, 2700)}
 
 USER_DAILY_LIMITS = {
     "groq": 10,
     "gemini": 4,
     "openrouter": 10,
     "xkiro": 15,
+    "xkiro_image": 3,
     "tavily": 5,
     "exa": 3,
     "cloudflare": 3,
@@ -171,6 +229,7 @@ USER_PER_MINUTE_LIMITS = {
     "gemini": 2,
     "openrouter": 3,
     "xkiro": 3,
+    "xkiro_image": 1,
     "tavily": 2,
     "exa": 1,
     "cloudflare": 1,
@@ -182,6 +241,11 @@ def user_daily_limit(provider):
 
 def user_per_minute_limit(provider):
     return env_int(f"{provider.upper()}_USER_PER_MINUTE_LIMIT", USER_PER_MINUTE_LIMITS.get(provider, 1))
+
+
+def provider_meta(provider):
+    label, kind = PROVIDER_META.get(provider, (provider, "other"))
+    return {"label": label, "kind": kind}
 
 
 
@@ -520,8 +584,9 @@ def ask_model(provider, prompt, context, mode, history=None, requested_model=Non
         raise HTTPException(502, "AI request failed.") from exc
     if r.status_code == 429:
         raise HTTPException(429, "The selected AI provider is rate-limited right now.")
-    if provider == "xkiro" and r.status_code in {400, 401, 403, 404}:
-        status = 503 if r.status_code == 401 else 403 if r.status_code == 403 else 400
+    if provider == "xkiro" and r.status_code in {400, 401, 402, 403, 404}:
+        # 401 -> 503 and 402 -> 429 so the normal fallback to other providers kicks in.
+        status = {401: 503, 402: 429, 403: 403}.get(r.status_code, 400)
         raise HTTPException(status, provider_error_message(provider, r.status_code, model_name))
     if r.status_code != 200:
         raise HTTPException(502, "The selected AI provider returned an error.")
@@ -616,6 +681,44 @@ def generate_cloudflare_image(prompt, user_id):
     record_usage(user_id, "cloudflare", "image", CLOUDFLARE_IMAGE_MODEL, 1)
     return {"url": f"data:image/jpeg;base64,{image_b64}", "model": CLOUDFLARE_IMAGE_MODEL}
 
+
+def xkiro_headers():
+    key = clean_key(os.getenv("XKIRO_API_KEY", ""))
+    if not key:
+        raise HTTPException(503, "xKiro is not configured. Add XKIRO_API_KEY.")
+    return {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+
+
+def xkiro_image_create(prompt, user_id):
+    """Start an xKiro image job (free image model only). xKiro images are async: the browser polls for the result."""
+    if len(prompt) > 2048:
+        raise HTTPException(400, "Image prompts can be at most 2048 characters.")
+    headers = xkiro_headers()
+    check_quota(user_id, "xkiro_image")
+    model_name = resolve_xkiro_image_model()
+    try:
+        r = httpx.post(
+            f"{XKIRO_BASE_URL}/images/generations",
+            headers=headers,
+            json={"model": model_name, "prompt": prompt, "n": 1, "size": "1024x1024"},
+            timeout=30,
+        )
+    except httpx.HTTPError as exc:
+        raise HTTPException(502, "xKiro image generation failed: the API could not be reached.") from exc
+    if r.status_code == 401:
+        raise HTTPException(503, "xKiro rejected the API key. Check XKIRO_API_KEY in Render.")
+    if r.status_code in {402, 429}:
+        raise HTTPException(429, "xKiro's free image allowance is used up or rate-limited right now.")
+    if r.status_code not in {200, 201, 202}:
+        raise HTTPException(502, f"xKiro image generation failed (HTTP {r.status_code}).")
+    try:
+        job_id = r.json().get("id")
+        uuid.UUID(str(job_id))
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise HTTPException(502, "xKiro returned an invalid image job.") from exc
+    record_usage(user_id, "xkiro_image", "image", model_name, 1)
+    return {"job_id": str(job_id), "model": model_name}
+
 def get_chat_session(session_id):
     if not session_id:
         raise HTTPException(401, "Sign in to community chat first.")
@@ -637,9 +740,14 @@ def health():
 
 @app.get("/api/config")
 def config():
+    image_providers = {
+        "cloudflare": bool(CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID),
+        "xkiro": bool(clean_key(os.getenv("XKIRO_API_KEY", ""))),
+    }
+    image_default = IMAGE_DEFAULT_PROVIDER if image_providers.get(IMAGE_DEFAULT_PROVIDER) else next((k for k, v in image_providers.items() if v), IMAGE_DEFAULT_PROVIDER)
     return {
         "models": [{"id": k, "label": v["label"], "configured": bool(clean_key(os.getenv(v["key"], "")))} for k, v in MODELS.items()],
-        "features": {"fast_search": bool(TAVILY_API_KEY), "deep_search": bool(EXA_API_KEY), "code": bool(clean_key(os.getenv("GROQ_API_KEY", ""))), "deep_think": True, "image": bool(CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID)}
+        "features": {"fast_search": bool(TAVILY_API_KEY), "deep_search": bool(EXA_API_KEY), "code": bool(clean_key(os.getenv("GROQ_API_KEY", ""))), "deep_think": True, "image": any(image_providers.values()), "image_providers": image_providers, "image_default": image_default}
     }
 
 
@@ -647,8 +755,30 @@ def config():
 def xkiro_models():
     models = xkiro_catalog()
     if not models:
-        raise HTTPException(503, "Could not load the xKiro model list right now.")
+        raise HTTPException(503, "Could not load the xKiro free-model list right now.")
     return {"models": models}
+
+
+@app.get("/api/xkiro/usage")
+def xkiro_account_usage():
+    """xKiro's own free-token allowance for the shared account. Only free_tokens is exposed (never email/wallet)."""
+    now = time.time()
+    if _xkiro_usage_cache["data"] and now - _xkiro_usage_cache["at"] < 60:
+        return _xkiro_usage_cache["data"]
+    headers = xkiro_headers()
+    try:
+        r = httpx.get(f"{XKIRO_BASE_URL}/usage", headers=headers, timeout=10)
+    except httpx.HTTPError as exc:
+        raise HTTPException(502, "Could not reach xKiro for usage.") from exc
+    if r.status_code != 200:
+        raise HTTPException(502, f"xKiro usage lookup failed (HTTP {r.status_code}).")
+    try:
+        ft = r.json().get("free_tokens") or {}
+    except ValueError as exc:
+        raise HTTPException(502, "xKiro returned an invalid usage response.") from exc
+    data = {"free_tokens": {"used_today": ft.get("used_today"), "limit_per_day": ft.get("limit_per_day"), "remaining": ft.get("remaining")}}
+    _xkiro_usage_cache.update(at=now, data=data)
+    return data
 
 
 @app.get("/api/usage/global")
@@ -659,6 +789,7 @@ def global_usage():
         today, month, active, _, _ = usage_counts("", provider)
         daily, monthly = provider_limits(provider)
         providers[provider] = {
+            **provider_meta(provider),
             "today": today,
             "month": month,
             "daily_limit": daily,
@@ -667,7 +798,7 @@ def global_usage():
             "monthly_remaining": max(0, monthly - month),
             "active_users": active,
         }
-    return {"providers": providers, "note": "These are Render AI tracked requests across all users. Cloudflare Workers AI billing/quota is managed by Cloudflare; these counters are only the app's tracked requests."}
+    return {"providers": providers, "note": "These are Render AI tracked requests across all users. Provider-side billing/quota (Cloudflare, xKiro) is managed by that provider; these counters are only the app's tracked requests."}
 
 
 @app.get("/api/usage")
@@ -688,6 +819,7 @@ def usage(response: Response, render_ai_user: str | None = Cookie(default=None, 
         adaptive = adaptive_remaining_from_counts(today, month, active, user_today, provider)
         effective_remaining = min(hard_daily_remaining, adaptive)
         providers[provider] = {
+            **provider_meta(provider),
             "today": today,
             "month": month,
             "daily_limit": daily,
@@ -794,8 +926,47 @@ def image_generate(body: AskRequest, response: Response, render_ai_user: str | N
     uid = user_id_from_cookie(render_ai_user)
     ensure_render_user(uid)
     response.set_cookie("__Host-render_ai_user", signed_user_cookie(uid), max_age=31536000, httponly=True, samesite="strict", secure=IS_SECURE, path="/")
+    if body.image_provider == "xkiro":
+        job = xkiro_image_create(body.prompt, uid)
+        return {"answer": "Image queued", "status": "processing", "job_id": job["job_id"], "provider": "xkiro_image", "model": job["model"]}
     result = generate_cloudflare_image(body.prompt, uid)
-    return {"answer": "Generated image", "image": result["url"], "provider": "cloudflare", "model": result["model"]}
+    return {"answer": "Generated image", "status": "succeeded", "image": result["url"], "provider": "cloudflare", "model": result["model"]}
+
+
+@app.get("/api/image/xkiro/{job_id}")
+def xkiro_image_status(job_id: str):
+    try:
+        job_id = str(uuid.UUID(job_id))
+    except ValueError as exc:
+        raise HTTPException(400, "Invalid image job ID.") from exc
+    headers = xkiro_headers()
+    try:
+        r = httpx.get(f"{XKIRO_BASE_URL}/images/generations/{job_id}", headers=headers, timeout=15)
+    except httpx.HTTPError as exc:
+        raise HTTPException(502, "Could not reach xKiro to check the image.") from exc
+    if r.status_code == 404:
+        raise HTTPException(404, "Image job not found.")
+    if r.status_code == 429:
+        raise HTTPException(429, "xKiro is rate-limiting status checks. Waiting a bit longer.")
+    if r.status_code != 200:
+        raise HTTPException(502, f"xKiro image status check failed (HTTP {r.status_code}).")
+    try:
+        job = r.json()
+    except ValueError as exc:
+        raise HTTPException(502, "xKiro returned an invalid image status.") from exc
+    status = job.get("status")
+    if status == "succeeded":
+        url = next((d.get("url") for d in (job.get("data") or []) if isinstance(d, dict) and isinstance(d.get("url"), str) and d["url"].startswith("https://")), None)
+        if not url:
+            raise HTTPException(502, "xKiro finished but returned no image URL.")
+        return {"status": "succeeded", "image": url}
+    if status in {"failed", "blocked"}:
+        err = job.get("error")
+        message = err.get("message") if isinstance(err, dict) else err
+        if status == "blocked":
+            message = "The image provider refused this prompt. Try rewording it."
+        return {"status": status, "error": str(message or "Image generation failed.")[:300]}
+    return {"status": "processing"}
 
 
 @app.post("/api/ask")
@@ -807,7 +978,7 @@ def ask(body: AskRequest, response: Response, render_ai_user: str | None = Cooki
     ensure_render_user(uid)
     response.set_cookie("__Host-render_ai_user", signed_user_cookie(uid), max_age=31536000, httponly=True, samesite="strict", secure=IS_SECURE, path="/")
     ai_provider = "groq" if body.mode == "code" else body.model
-    resolve_model(ai_provider, body.xkiro_model)  # reject an unknown xKiro model before spending any quota
+    resolve_model(ai_provider, body.xkiro_model)  # reject an unknown/non-free xKiro model before spending any quota
     search_provider = "tavily" if body.mode == "fast-search" else "exa" if body.mode == "deep-search" else None
     if search_provider:
         check_quota(uid, search_provider)
@@ -830,7 +1001,7 @@ def ask_stream(body: AskRequest, response: Response, render_ai_user: str | None 
     ensure_render_user(uid)
     response.set_cookie("__Host-render_ai_user", signed_user_cookie(uid), max_age=31536000, httponly=True, samesite="strict", secure=IS_SECURE, path="/")
     ai_provider = "groq" if body.mode == "code" else body.model
-    model_name = resolve_model(ai_provider, body.xkiro_model)  # exact model ID; validated against xKiro's catalog
+    model_name = resolve_model(ai_provider, body.xkiro_model)  # exact model ID; validated against xKiro's FREE catalog
     search_provider = "tavily" if body.mode == "fast-search" else "exa" if body.mode == "deep-search" else None
     if search_provider:
         check_quota(uid, search_provider)
@@ -864,7 +1035,7 @@ def ask_stream(body: AskRequest, response: Response, render_ai_user: str | None 
         try:
             with httpx.stream("POST", cfg["url"], headers=headers, json=payload, timeout=90) as r:
                 if r.status_code != 200:
-                    if r.status_code in {429, 502, 503}:
+                    if r.status_code in {402, 429, 502, 503}:
                         try:
                             actual_provider, fallback_text, fallback_model = ask_with_fallback(ai_provider, body.prompt, context, body.mode, body.history, uid, body.xkiro_model)
                             print(f"[AI] stream fallback selected={ai_provider} used={actual_provider} model={fallback_model} mode={body.mode}", flush=True)
