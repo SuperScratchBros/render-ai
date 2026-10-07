@@ -5,6 +5,7 @@ import hmac
 import json
 import os
 import secrets
+import time
 import uuid
 from datetime import date, datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
@@ -18,10 +19,14 @@ from pydantic import BaseModel, Field
 from tavily import TavilyClient
 
 BASE_DIR = Path(__file__).parent
+XKIRO_BASE_URL = (os.getenv("XKIRO_BASE_URL", "").strip() or "https://api.xkiro.com/v1").rstrip("/")
 MODELS = {
     "groq": {"label": "OpenAI GPT-OSS 120B via Groq", "model": os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"), "url": "https://api.groq.com/openai/v1/chat/completions", "key": "GROQ_API_KEY"},
     "gemini": {"label": "Gemini: 3.8 Flash", "model": os.getenv("GEMINI_MODEL", "gemini-3.8-flash"), "url": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", "key": "GEMINI_API_KEY"},
     "openrouter": {"label": "OpenRouter: Mixed", "model": os.getenv("OPENROUTER_MODEL", "openrouter/free"), "url": "https://openrouter.ai/api/v1/chat/completions", "key": "OPENROUTER_API_KEY"},
+    # xKiro is a multi-model gateway. "model" is only the optional default (XKIRO_MODEL);
+    # the person can pick any model from xKiro's live catalog in the UI.
+    "xkiro": {"label": "xKiro: 90+ models", "model": os.getenv("XKIRO_MODEL", "").strip(), "url": f"{XKIRO_BASE_URL}/chat/completions", "key": "XKIRO_API_KEY"},
 }
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "").strip()
 EXA_API_KEY = os.getenv("EXA_API_KEY", "").strip()
@@ -44,6 +49,7 @@ class AskRequest(BaseModel):
     prompt: str = Field(min_length=1, max_length=12000)
     mode: str = Field(default="chat", pattern="^(chat|fast-search|deep-search|code|deep-think|image)$")
     history: list[dict] = Field(default_factory=list, max_length=20)
+    xkiro_model: str | None = Field(default=None, max_length=120)
 
 
 class ChatLoginRequest(BaseModel):
@@ -59,6 +65,63 @@ def clean_key(value: str) -> str:
     if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
         value = value[1:-1].strip()
     return value
+
+
+_xkiro_cache = {"at": 0.0, "models": []}
+
+
+def xkiro_catalog():
+    """Chat-model catalog from xKiro (public endpoint, cached for 5 minutes)."""
+    now = time.time()
+    if _xkiro_cache["models"] and now - _xkiro_cache["at"] < 300:
+        return _xkiro_cache["models"]
+    try:
+        r = httpx.get(f"{XKIRO_BASE_URL}/models", timeout=10)
+        if r.status_code == 200:
+            models = []
+            for m in r.json().get("data", []):
+                if isinstance(m, dict) and isinstance(m.get("id"), str) and m["id"]:
+                    models.append({
+                        "id": m["id"],
+                        "label": m.get("display_name") or m["id"],
+                        "owned_by": m.get("owned_by"),
+                        "access_tier": m.get("access_tier") or "paid",
+                        "context_length": m.get("context_length"),
+                        "capabilities": m.get("capabilities") or {},
+                    })
+            if models:
+                _xkiro_cache.update(at=now, models=models)
+                return models
+    except (httpx.HTTPError, ValueError, AttributeError):
+        pass
+    return _xkiro_cache["models"]  # stale copy (or empty) if xKiro was unreachable
+
+
+def resolve_model(provider, requested=None):
+    """Return the exact model ID to send. For xKiro, validate it against the live catalog."""
+    cfg = MODELS[provider]
+    if provider != "xkiro":
+        return cfg["model"]
+    catalog = xkiro_catalog()
+    ids = [m["id"] for m in catalog]
+    requested = (requested or "").strip() or cfg["model"]
+    if not requested:
+        if not ids:
+            raise HTTPException(503, "Could not load the xKiro model list. Try again shortly or set XKIRO_MODEL.")
+        free = [m["id"] for m in catalog if m.get("access_tier") == "free"]
+        return (free or ids)[0]
+    if ids and requested not in ids:
+        raise HTTPException(400, f"xKiro has no model called '{requested}'. Pick one from the model list.")
+    return requested
+
+
+def provider_error_message(provider, status, model_name):
+    if provider == "xkiro":
+        if status == 401:
+            return "xKiro rejected the API key. Check XKIRO_API_KEY in Render."
+        if status in {400, 403, 404}:
+            return f"xKiro would not run '{model_name}' (HTTP {status}). The model may be unavailable or need a paid/deposited xKiro account."
+    return "The selected AI provider returned an error."
 
 
 def signed_user_cookie(user_id):
@@ -91,12 +154,13 @@ def env_int(name, default):
         return default
 
 
-DEFAULT_LIMITS = {"groq": (900, 27000), "gemini": (18, 540), "openrouter": (45, 1350), "tavily": (100, 1000), "exa": (20, 600), "cloudflare": (90, 2700)}
+DEFAULT_LIMITS = {"groq": (900, 27000), "gemini": (18, 540), "openrouter": (45, 1350), "xkiro": (200, 6000), "tavily": (100, 1000), "exa": (20, 600), "cloudflare": (90, 2700)}
 
 USER_DAILY_LIMITS = {
     "groq": 10,
     "gemini": 4,
     "openrouter": 10,
+    "xkiro": 15,
     "tavily": 5,
     "exa": 3,
     "cloudflare": 3,
@@ -106,6 +170,7 @@ USER_PER_MINUTE_LIMITS = {
     "groq": 3,
     "gemini": 2,
     "openrouter": 3,
+    "xkiro": 3,
     "tavily": 2,
     "exa": 1,
     "cloudflare": 1,
@@ -387,13 +452,14 @@ def current_ai_datetime():
     return local.strftime("%Y-%m-%d"), local.strftime("%H:%M:%S %Z"), tz_name
 
 
-def ai_start_prompt(provider, mode):
+def ai_start_prompt(provider, mode, model_name=None):
     cfg = MODELS[provider]
+    model_name = model_name or cfg["model"]
     today, current_time, tz_name = current_ai_datetime()
-    provider_name = {"groq": "Groq", "gemini": "Google Gemini", "openrouter": "OpenRouter"}.get(provider, provider)
+    provider_name = {"groq": "Groq", "gemini": "Google Gemini", "openrouter": "OpenRouter", "xkiro": "xKiro"}.get(provider, provider)
     prompt = (
         f"You are NLGEP AI, an AI assistant in the NLGEP/Render AI platform. "
-        f"Your model is {cfg['model']}. Your provider is {provider_name}. "
+        f"Your model is {model_name}. Your provider is {provider_name}. "
         f"The current date is {today}. The current time is {current_time}. "
         f"The configured time zone is {tz_name}. You are operating in {mode} mode. "
         "Be helpful, accurate, clear, and honest about what you know. "
@@ -406,6 +472,8 @@ def ai_start_prompt(provider, mode):
         prompt += " You are running through Google's Gemini API compatibility endpoint. Follow the user's request directly and avoid unnecessary verbosity."
     elif provider == "openrouter":
         prompt += " You are running through OpenRouter. The selected OpenRouter model may be routed dynamically, so do not invent a specific underlying model unless the API response identifies it."
+    elif provider == "xkiro":
+        prompt += " You are running through xKiro's OpenAI-compatible gateway, which routes to many different models. Your model is the one named above; do not claim to be a different model."
     if mode == "code":
         prompt += " You are in Write Code mode. Produce production-quality code, think through edge cases, include tests when useful, and clearly separate code from explanation."
     if mode == "deep-think":
@@ -415,8 +483,8 @@ def ai_start_prompt(provider, mode):
     return prompt
 
 
-def build_messages(prompt, context, mode, history, provider):
-    system = ai_start_prompt(provider, mode)
+def build_messages(prompt, context, mode, history, provider, model_name=None):
+    system = ai_start_prompt(provider, mode, model_name)
     messages = [{"role": "system", "content": system}]
     for item in history[-12:]:
         role = item.get("role")
@@ -429,20 +497,21 @@ def build_messages(prompt, context, mode, history, provider):
     return messages
 
 
-def ask_model(provider, prompt, context, mode, history=None):
+def ask_model(provider, prompt, context, mode, history=None, requested_model=None):
     if provider not in MODELS:
         raise HTTPException(400, "Choose a valid model before sending a message.")
     cfg = MODELS[provider]
     key = clean_key(os.getenv(cfg["key"], ""))
     if not key:
         raise HTTPException(503, f"{cfg['label']} is not configured. Add {cfg['key']}.")
+    model_name = resolve_model(provider, requested_model)
     headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
     if provider == "openrouter":
         site = os.getenv("OPENROUTER_SITE_URL", "").strip()
         if site:
             headers["HTTP-Referer"] = site
         headers["X-Title"] = os.getenv("OPENROUTER_APP_NAME", "Render AI")
-    payload = {"model": cfg["model"], "messages": build_messages(prompt, context, mode, history or [], provider), "max_tokens": 3000}
+    payload = {"model": model_name, "messages": build_messages(prompt, context, mode, history or [], provider, model_name), "max_tokens": 3000}
     if provider == "groq" and mode == "deep-think":
         payload["reasoning_effort"] = "high"
     try:
@@ -451,6 +520,9 @@ def ask_model(provider, prompt, context, mode, history=None):
         raise HTTPException(502, "AI request failed.") from exc
     if r.status_code == 429:
         raise HTTPException(429, "The selected AI provider is rate-limited right now.")
+    if provider == "xkiro" and r.status_code in {400, 401, 403, 404}:
+        status = 503 if r.status_code == 401 else 403 if r.status_code == 403 else 400
+        raise HTTPException(status, provider_error_message(provider, r.status_code, model_name))
     if r.status_code != 200:
         raise HTTPException(502, "The selected AI provider returned an error.")
     try:
@@ -460,10 +532,10 @@ def ask_model(provider, prompt, context, mode, history=None):
         raise HTTPException(502, "The model returned an unexpected response.") from exc
     if not text.strip():
         raise HTTPException(502, "The model returned an empty response.")
-    return text
+    return text, model_name
 
 
-def ask_with_fallback(provider, prompt, context, mode, history, user_id):
+def ask_with_fallback(provider, prompt, context, mode, history, user_id, requested_model=None):
     providers = [provider]
     if provider != "openrouter" and clean_key(os.getenv("OPENROUTER_API_KEY", "")):
         providers.append("openrouter")
@@ -473,9 +545,9 @@ def ask_with_fallback(provider, prompt, context, mode, history, user_id):
     for candidate in providers:
         try:
             check_quota(user_id, candidate)
-            text = ask_model(candidate, prompt, context, mode, history)
-            print(f'[AI] selected={provider} used={candidate} model={MODELS[candidate]["model"]} mode={mode} fallback={candidate != provider}', flush=True)
-            return candidate, text
+            text, model_name = ask_model(candidate, prompt, context, mode, history, requested_model if candidate == provider else None)
+            print(f'[AI] selected={provider} used={candidate} model={model_name} mode={mode} fallback={candidate != provider}', flush=True)
+            return candidate, text, model_name
         except HTTPException as exc:
             last_error = exc
             if exc.status_code not in {429, 502, 503}:
@@ -569,6 +641,14 @@ def config():
         "models": [{"id": k, "label": v["label"], "configured": bool(clean_key(os.getenv(v["key"], "")))} for k, v in MODELS.items()],
         "features": {"fast_search": bool(TAVILY_API_KEY), "deep_search": bool(EXA_API_KEY), "code": bool(clean_key(os.getenv("GROQ_API_KEY", ""))), "deep_think": True, "image": bool(CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID)}
     }
+
+
+@app.get("/api/xkiro/models")
+def xkiro_models():
+    models = xkiro_catalog()
+    if not models:
+        raise HTTPException(503, "Could not load the xKiro model list right now.")
+    return {"models": models}
 
 
 @app.get("/api/usage/global")
@@ -727,17 +807,18 @@ def ask(body: AskRequest, response: Response, render_ai_user: str | None = Cooki
     ensure_render_user(uid)
     response.set_cookie("__Host-render_ai_user", signed_user_cookie(uid), max_age=31536000, httponly=True, samesite="strict", secure=IS_SECURE, path="/")
     ai_provider = "groq" if body.mode == "code" else body.model
+    resolve_model(ai_provider, body.xkiro_model)  # reject an unknown xKiro model before spending any quota
     search_provider = "tavily" if body.mode == "fast-search" else "exa" if body.mode == "deep-search" else None
     if search_provider:
         check_quota(uid, search_provider)
     context, sources = ("", [])
     if search_provider:
         context, sources = search_web(body.prompt, deep=body.mode == "deep-search")
-    actual_provider, answer = ask_with_fallback(ai_provider, body.prompt, context, body.mode, body.history, uid)
-    record_usage(uid, actual_provider, body.mode, MODELS[actual_provider]["model"])
+    actual_provider, answer, model_name = ask_with_fallback(ai_provider, body.prompt, context, body.mode, body.history, uid, body.xkiro_model)
+    record_usage(uid, actual_provider, body.mode, model_name)
     if search_provider:
         record_usage(uid, search_provider, body.mode, search_provider)
-    return {"answer": answer, "sources": sources, "provider": actual_provider}
+    return {"answer": answer, "sources": sources, "provider": actual_provider, "model": model_name}
 
 
 @app.post("/api/ask/stream")
@@ -749,6 +830,7 @@ def ask_stream(body: AskRequest, response: Response, render_ai_user: str | None 
     ensure_render_user(uid)
     response.set_cookie("__Host-render_ai_user", signed_user_cookie(uid), max_age=31536000, httponly=True, samesite="strict", secure=IS_SECURE, path="/")
     ai_provider = "groq" if body.mode == "code" else body.model
+    model_name = resolve_model(ai_provider, body.xkiro_model)  # exact model ID; validated against xKiro's catalog
     search_provider = "tavily" if body.mode == "fast-search" else "exa" if body.mode == "deep-search" else None
     if search_provider:
         check_quota(uid, search_provider)
@@ -769,8 +851,8 @@ def ask_stream(body: AskRequest, response: Response, render_ai_user: str | None 
         headers["X-Title"] = os.getenv("OPENROUTER_APP_NAME", "Render AI")
 
     payload = {
-        "model": cfg["model"],
-        "messages": build_messages(body.prompt, context, body.mode, body.history, ai_provider),
+        "model": model_name,
+        "messages": build_messages(body.prompt, context, body.mode, body.history, ai_provider, model_name),
         "max_tokens": 3000,
         "stream": True,
     }
@@ -784,18 +866,19 @@ def ask_stream(body: AskRequest, response: Response, render_ai_user: str | None 
                 if r.status_code != 200:
                     if r.status_code in {429, 502, 503}:
                         try:
-                            actual_provider, fallback_text = ask_with_fallback(ai_provider, body.prompt, context, body.mode, body.history, uid)
-                            print(f"[AI] stream fallback selected={ai_provider} used={actual_provider} model={MODELS[actual_provider]['model']} mode={body.mode}", flush=True)
-                            record_usage(uid, actual_provider, body.mode, MODELS[actual_provider]["model"])
+                            actual_provider, fallback_text, fallback_model = ask_with_fallback(ai_provider, body.prompt, context, body.mode, body.history, uid, body.xkiro_model)
+                            print(f"[AI] stream fallback selected={ai_provider} used={actual_provider} model={fallback_model} mode={body.mode}", flush=True)
+                            record_usage(uid, actual_provider, body.mode, fallback_model)
                             if search_provider:
                                 record_usage(uid, search_provider, body.mode, search_provider)
-                            yield f"data: {json.dumps({'type':'fallback','provider':actual_provider,'model':MODELS[actual_provider]['model'],'from_provider':ai_provider,'text':fallback_text,'sources':sources})}\n\n"
+                            yield f"data: {json.dumps({'type':'fallback','provider':actual_provider,'model':fallback_model,'from_provider':ai_provider,'text':fallback_text,'sources':sources})}\n\n"
                         except HTTPException as e:
                             yield f"data: {json.dumps({'type':'error','error':e.detail})}\n\n"
                         yield "data: [DONE]\n\n"
                         return
 
-                    yield f"data: {json.dumps({'type':'error','error':'The selected AI provider returned an error (status ' + str(r.status_code) + ').'})}\n\n"
+                    detail = provider_error_message(ai_provider, r.status_code, model_name)
+                    yield f"data: {json.dumps({'type':'error','error':detail + ' (status ' + str(r.status_code) + ').'})}\n\n"
                     yield "data: [DONE]\n\n"
                     return
 
@@ -819,9 +902,9 @@ def ask_stream(body: AskRequest, response: Response, render_ai_user: str | None 
 
         except httpx.HTTPError as e:
             try:
-                actual_provider, fallback_text = ask_with_fallback(ai_provider, body.prompt, context, body.mode, body.history, uid)
-                yield f"data: {json.dumps({'type':'fallback','provider':actual_provider,'text':fallback_text,'sources':sources})}\n\n"
-                record_usage(uid, actual_provider, body.mode, MODELS[actual_provider]["model"])
+                actual_provider, fallback_text, fallback_model = ask_with_fallback(ai_provider, body.prompt, context, body.mode, body.history, uid, body.xkiro_model)
+                yield f"data: {json.dumps({'type':'fallback','provider':actual_provider,'model':fallback_model,'text':fallback_text,'sources':sources})}\n\n"
+                record_usage(uid, actual_provider, body.mode, fallback_model)
                 if search_provider:
                     record_usage(uid, search_provider, body.mode, search_provider)
             except HTTPException as err:
@@ -835,11 +918,11 @@ def ask_stream(body: AskRequest, response: Response, render_ai_user: str | None 
 
         answer = "".join(collected)
         if answer.strip():
-            print(f"[AI] stream selected={ai_provider} used={ai_provider} model={cfg['model']} mode={body.mode} fallback=False", flush=True)
-            record_usage(uid, ai_provider, body.mode, cfg["model"])
+            print(f"[AI] stream selected={ai_provider} used={ai_provider} model={model_name} mode={body.mode} fallback=False", flush=True)
+            record_usage(uid, ai_provider, body.mode, model_name)
             if search_provider:
                 record_usage(uid, search_provider, body.mode, search_provider)
-        yield f"data: {json.dumps({'type':'done','sources':sources,'provider':ai_provider,'model':cfg['model'],'fallback':False})}\n\n"
+        yield f"data: {json.dumps({'type':'done','sources':sources,'provider':ai_provider,'model':model_name,'fallback':False})}\n\n"
         yield "data: [DONE]\n\n"
 
     stream_response = StreamingResponse(generate(), media_type="text/event-stream", headers={"Cache-Control":"no-cache","X-Accel-Buffering":"no"})

@@ -13,6 +13,9 @@ services:
         sync: false
       - key: OPENROUTER_API_KEY
         sync: false
+      # xKiro key: set the value in the Render dashboard (Environment tab). Never commit it.
+      - key: XKIRO_API_KEY
+        sync: false
       - key: TAVILY_API_KEY
         sync: false
       - key: EXA_API_KEY
@@ -35,6 +38,8 @@ services:
         value: gemini-3.8-flash
       - key: OPENROUTER_MODEL
         value: openrouter/free
+      - key: XKIRO_BASE_URL
+        value: https://api.xkiro.com/v1
       # App-wide provider safety caps (below the current published free/API allowances)
       - key: GROQ_DAILY_LIMIT
         value: "900"
@@ -48,6 +53,10 @@ services:
         value: "45"
       - key: OPENROUTER_MONTHLY_LIMIT
         value: "1350"
+      - key: XKIRO_DAILY_LIMIT
+        value: "200"
+      - key: XKIRO_MONTHLY_LIMIT
+        value: "6000"
       - key: TAVILY_DAILY_LIMIT
         value: "100"
       - key: TAVILY_MONTHLY_LIMIT
@@ -76,6 +85,10 @@ services:
       - key: OPENROUTER_USER_DAILY_LIMIT
         value: "10"
       - key: OPENROUTER_USER_PER_MINUTE_LIMIT
+        value: "3"
+      - key: XKIRO_USER_DAILY_LIMIT
+        value: "15"
+      - key: XKIRO_USER_PER_MINUTE_LIMIT
         value: "3"
       - key: TAVILY_USER_DAILY_LIMIT
         value: "5"
