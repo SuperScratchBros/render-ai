@@ -600,47 +600,101 @@ def record_usage(user_id, provider, feature, model, units=1):
 
 
 def search_web(query, deep=False):
+    query = str(query or "").strip()
+    if not query:
+        raise HTTPException(400, "Search needs a question or search query.")
+
     if deep:
         if not EXA_API_KEY:
             raise HTTPException(503, "Exa is not configured. Add EXA_API_KEY.")
-        try:
-            r = httpx.post(
-                "https://api.exa.ai/search",
-                headers={"x-api-key": EXA_API_KEY, "Content-Type": "application/json"},
-                json={"query": query, "type": "auto", "contents": {"highlights": {"maxHighlightsPerPage": 3}}},
-                timeout=30,
-            )
-        except httpx.HTTPError as exc:
-            raise HTTPException(502, "Exa search failed.") from exc
-        if r.status_code == 429:
-            raise HTTPException(429, "Exa is rate-limited right now.")
-        if r.status_code != 200:
-            raise HTTPException(502, "Exa search failed.")
-        items = r.json().get("results", [])[:8]
-        sources = [{"title": x.get("title") or x.get("url") or "Source", "url": x.get("url", "")} for x in items if x.get("url")]
-        pieces = []
-        for item in items:
-            highlights = item.get("highlights") or []
-            if isinstance(highlights, str):
-                highlights = [highlights]
-            excerpt = "\n".join(str(h) for h in highlights[:3])
-            pieces.append(f"SOURCE: {item.get('title') or item.get('url')}\nURL: {item.get('url', '')}\n{excerpt}")
-        return "\n\n".join(pieces)[:9000], sources
+        payload = {
+            "query": query,
+            "type": "deep",
+            "numResults": 8,
+            "contents": {
+                "highlights": True,
+                "maxAgeHours": 168,
+            },
+        }
+        last_status = None
+        for attempt in range(3):
+            try:
+                r = httpx.post(
+                    "https://api.exa.ai/search",
+                    headers={"x-api-key": EXA_API_KEY, "Content-Type": "application/json"},
+                    json=payload,
+                    timeout=90,
+                )
+            except httpx.HTTPError as exc:
+                if attempt == 2:
+                    raise HTTPException(502, "Exa deep search could not be reached.") from exc
+                time.sleep(0.8 * (attempt + 1))
+                continue
+            last_status = r.status_code
+            if r.status_code == 200:
+                try:
+                    data = r.json()
+                except ValueError as exc:
+                    raise HTTPException(502, "Exa returned invalid search data.") from exc
+                items = (data.get("results") or [])[:8]
+                sources = [{"title": x.get("title") or x.get("url") or "Source", "url": x.get("url", "")}
+                           for x in items if isinstance(x, dict) and x.get("url")]
+                pieces = []
+                for item in items:
+                    highlights = item.get("highlights") or []
+                    if isinstance(highlights, str):
+                        highlights = [highlights]
+                    excerpt = "\n".join(str(h) for h in highlights[:4])
+                    pieces.append(
+                        f"SOURCE: {item.get('title') or item.get('url')}\n"
+                        f"URL: {item.get('url', '')}\n{excerpt}"
+                    )
+                context = "\n\n".join(pieces)[:12000]
+                if not context:
+                    raise HTTPException(502, "Exa completed the search but returned no usable results.")
+                return context, sources
+            if r.status_code in {408, 429, 500, 502, 503, 504} and attempt < 2:
+                time.sleep(0.8 * (attempt + 1))
+                continue
+            detail = (r.text or "").strip()[:300]
+            raise HTTPException(502, f"Exa deep search failed (HTTP {r.status_code}). {detail}".strip())
+        raise HTTPException(502, f"Exa deep search failed (HTTP {last_status or 500}).")
+
     if not tavily:
         raise HTTPException(503, "Tavily is not configured. Add TAVILY_API_KEY.")
-    try:
-        result = tavily.search(query=query, max_results=5, search_depth="basic")
-    except Exception as exc:
-        raise HTTPException(502, "Tavily search failed.") from exc
-    sources, pieces = [], []
-    for item in result.get("results", []):
-        title = item.get("title") or item.get("url") or "Source"
-        url = item.get("url") or ""
-        if url:
-            sources.append({"title": title, "url": url})
-        pieces.append(f"SOURCE: {title}\nURL: {url}\n{(item.get('content') or '')[:1400]}")
-    return "\n\n".join(pieces)[:7000], sources
-
+    last_error = None
+    for attempt in range(3):
+        try:
+            result = tavily.search(
+                query=query,
+                max_results=6,
+                search_depth="basic",
+                topic="general",
+            )
+            if not isinstance(result, dict):
+                raise ValueError("Tavily returned an unexpected response.")
+            sources, pieces = [], []
+            for item in result.get("results", []):
+                if not isinstance(item, dict):
+                    continue
+                title = item.get("title") or item.get("url") or "Source"
+                url = item.get("url") or ""
+                if url:
+                    sources.append({"title": title, "url": url})
+                content = (item.get("content") or item.get("snippet") or "")[:1800]
+                pieces.append(f"SOURCE: {title}\nURL: {url}\n{content}")
+            context = "\n\n".join(pieces)[:9000]
+            if not context:
+                raise HTTPException(502, "Tavily completed the search but returned no usable results.")
+            return context, sources
+        except HTTPException:
+            raise
+        except Exception as exc:
+            last_error = exc
+            if attempt < 2:
+                time.sleep(0.7 * (attempt + 1))
+                continue
+    raise HTTPException(502, "Tavily fast search failed after multiple attempts.") from last_error
 
 def current_ai_datetime():
     now = datetime.now(timezone.utc)
