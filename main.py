@@ -77,7 +77,7 @@ app = FastAPI(title="Render AI")
 # File storage lives in Supabase Storage (private bucket). Limits keep the free 512 MB Render instance safe:
 # uploads are capped and read in chunks, and nothing is kept in server memory afterwards.
 FILES_BUCKET = os.getenv("SUPABASE_FILES_BUCKET", "render-files").strip() or "render-files"
-FILE_MAX_SIZE = env_int("FILE_MAX_SIZE", 10 * 1024 * 1024) or 10 * 1024 * 1024
+FILE_MAX_SIZE = env_int("FILE_MAX_SIZE", env_int("BLOB_MAX_FILE_SIZE", 25 * 1024 * 1024)) or 25 * 1024 * 1024
 FILE_USER_MAX_FILES = env_int("FILE_USER_MAX_FILES", 20)
 FILE_USER_MAX_TOTAL = env_int("FILE_USER_MAX_TOTAL", 50 * 1024 * 1024)
 MAX_ATTACH_BYTES = 200_000
@@ -423,7 +423,9 @@ def storage_signed_url(path, filename=None, download=False):
 
 def file_usage(user_id):
     q = supabase_request("GET", f"render_files?select=size&user_id=eq.{user_id}&limit=1000")
-    rows = q.json() if q.status_code < 300 else []
+    if q.status_code >= 300:
+        raise HTTPException(503, f"Could not check your file storage usage. {supabase_error_detail(q)}")
+    rows = q.json()
     return len(rows), sum(int(r.get("size") or 0) for r in rows)
 
 
