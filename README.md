@@ -88,11 +88,15 @@ Every provider has four limits. The variable name is the provider prefix plus th
 | `EXA` | Deep Search | 20 | 600 | 3 | 1 |
 | `CLOUDFLARE` | Cloudflare images | 90 | 2700 | 3 | 1 |
 
-The usage dashboard in the app shows each provider's remaining requests with progress bars (your limits and everyone's), plus the xKiro account's free-token allowance for the day.
+The usage dashboard in the app shows daily and monthly remaining requests for each provider, with explicit reset timing. Usage is calculated from the current calendar period, so monthly counters roll over automatically on the first day of each month.
+
+## Saved AI chats
+
+Each anonymous user can have up to **3 saved AI chats**. Each chat keeps only its **5 most recent messages**. The server loads history by chat ID, so messages from the other chats are never fed to the AI. For an existing Supabase project, run `supabase_ai_chats.sql` once; for a fresh setup, `supabase_schema.sql` includes these tables.
 
 ## Supabase
 
-The app stores usage, users, community chat and file metadata in Supabase (`render_users`, `render_usage`, `render_files`, `chat_users`, `chat_sessions`, `chat_messages`). Run `supabase_schema.sql` once in the Supabase SQL editor for a fresh setup. `supabase_render_files.sql` is also available when only the file table is missing.
+The app stores usage, users, saved AI chat history, community chat and file metadata in Supabase (`render_users`, `render_usage`, `render_files`, `render_ai_chats`, `render_ai_chat_messages`, `chat_users`, `chat_sessions`, `chat_messages`). Run `supabase_schema.sql` once in the Supabase SQL editor for a fresh setup. `supabase_ai_chats.sql` is the migration for an existing setup.
 
 ## Run locally
 
