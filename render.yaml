@@ -24,14 +24,15 @@ services:
         sync: false
       - key: CLOUDFLARE_ACCOUNT_ID
         sync: false
-      - key: UPSTASH_BLOB_TOKEN
-        sync: false
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_SERVICE_ROLE_KEY
         sync: false
       - key: APP_SECRET_KEY
         sync: false
+      # Marks cookies as Secure (required for the signed user cookie, which uploads and usage depend on)
+      - key: ENVIRONMENT
+        value: production
       - key: GROQ_MODEL
         value: openai/gpt-oss-120b
       - key: GEMINI_MODEL
@@ -45,6 +46,15 @@ services:
       # Which image engine is selected by default: cloudflare or xkiro (users can switch in the UI)
       - key: IMAGE_DEFAULT_PROVIDER
         value: cloudflare
+      # File storage (Supabase Storage, private bucket). Kept small for the free 512 MB instance.
+      - key: SUPABASE_FILES_BUCKET
+        value: render-files
+      - key: FILE_MAX_SIZE
+        value: "10485760"
+      - key: FILE_USER_MAX_FILES
+        value: "20"
+      - key: FILE_USER_MAX_TOTAL
+        value: "52428800"
       # App-wide provider safety caps (below the current published free/API allowances)
       - key: GROQ_DAILY_LIMIT
         value: "900"
@@ -115,5 +125,3 @@ services:
         value: "3"
       - key: CLOUDFLARE_USER_PER_MINUTE_LIMIT
         value: "1"
-      - key: BLOB_MAX_FILE_SIZE
-        value: "26214400"

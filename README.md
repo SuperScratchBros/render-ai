@@ -1,31 +1,40 @@
 # Render AI
 
-A small AI web app (FastAPI + a single `index.html`) that runs on Render. It offers several chat providers, optional web search, image generation, private file uploads, a community chat, and a live usage/limits dashboard.
+A small AI web app (FastAPI + a single `index.html`, no build step) for Render. It has a standard AI layout: a left sidebar and the chat taking the middle and right.
 
-## Features
+## Pages (sidebar)
 
-| Feature | Provider(s) |
+| Page | What it does |
 | --- | --- |
-| Chat | Groq (`openai/gpt-oss-120b`), Google Gemini, OpenRouter (`openrouter/free`), **xKiro (free models only)** |
-| Fast Search | Tavily |
-| Deep Search | Exa |
-| Write Code | Groq |
-| Image generation | **Switchable:** Cloudflare Workers AI (FLUX) or xKiro (free image model) |
-| File uploads | Upstash Blob |
-| Usage, limits and community chat | Supabase |
+| **Chat** | Chat with the selected model. Modes: Chat, Fast Search, Deep Search, Write Code, Deep Think. Copy replies, stop a reply mid-way, attach a text/code file. |
+| **AI Models** | Models grouped by provider (Groq, Google Gemini, OpenRouter, xKiro). Click a model to use it. xKiro lists every **free** model with search. |
+| **API Limits** | Donut charts showing how much is left per provider. Switch between *You* / *Everyone* and *Today* / *This month*. Also shows the xKiro account's free-token allowance. |
+| **Image Generator** | Prompt box with a switchable engine: Cloudflare FLUX or xKiro (free image model). |
+| **Image Models** | Pick the image engine and model. |
+| **Files** | Drag-and-drop uploads, download, delete, storage meter, and "Use in chat" for text/code files. |
+| **Themes & Settings** | Styles (Classic, Glassmorphism, Neumorphism, Flat Minimal), light/dark, theme color, custom instructions, export/clear memory. |
+| **Community Chat** | Simple shared chat room (Supabase). |
 
-### xKiro
+## Memory
 
-[xKiro](https://xkiro.com) is an OpenAI-compatible gateway with many models behind one API key.
+- The chat shows only the **5 most recent exchanges** (your message + the AI reply), and exactly those are sent to the AI as memory.
+- Memory is **wiped every Monday** (local time of the visitor's browser). The sidebar shows how long until the next wipe.
+- Memory is stored in the visitor's browser (`localStorage`), not on the server. The server also only reads the last 10 history messages.
+- Extras: *New chat* button, export the chat as Markdown, and custom instructions (500 characters) that are sent with every message.
 
-- **Free models only.** The app loads xKiro's public model list (`GET /v1/models`) and keeps only models whose `access_tier` is `free`. Paid/premium models are not listed and are rejected by the server even if someone sends the ID by hand.
-- **Pick the exact model.** Choose "xKiro: free models" and use the dropdown. Leaving it on Default uses the first free model (or `XKIRO_MODEL` if set). The reply shows which model actually answered.
-- **Image engine toggle.** In Generate Image mode, switch between Cloudflare FLUX and xKiro. xKiro image jobs are asynchronous, so the page shows progress and keeps checking until the image is ready (up to 5 minutes).
-- **Fallback.** If xKiro is rate-limited or out of free allowance, chat falls back to OpenRouter or Groq when those keys are set.
+## Files
+
+Files are stored in a **private Supabase Storage bucket** (default `render-files`, created automatically on first upload; you can also create it yourself). Uploads go through the app (so the signed cookie identifies the owner) and are capped to keep the free 512 MB Render instance safe:
+
+- 10 MB per file, 20 files and 50 MB total per visitor (all configurable)
+- Download links expire after 5 minutes
+- Text/code files (.txt .md .csv .json .py .js …) up to 200 KB can be attached to a chat message
+
+Run `supabase_render_files.sql` once in Supabase to create the `render_files` table.
 
 ## Environment variables
 
-Set these in the Render dashboard (**Service → Environment**). Secrets use `sync: false` in `render.yaml`, so Render will ask for them but they are never stored in the repo. **Never commit API keys.**
+Set these in the Render dashboard (**Service → Environment**). Secrets use `sync: false` in `render.yaml`, so Render asks for them but they are never stored in the repo. **Never commit API keys.**
 
 ### Required
 
@@ -33,7 +42,8 @@ Set these in the Render dashboard (**Service → Environment**). Secrets use `sy
 | --- | --- |
 | `APP_SECRET_KEY` | Long random string used to sign the anonymous user cookie. |
 | `SUPABASE_URL` | Your Supabase project URL. |
-| `SUPABASE_SERVICE_ROLE_KEY` | Supabase service-role key (server only). |
+| `SUPABASE_SERVICE_ROLE_KEY` | Supabase service-role key (server only). Also used for file storage. |
+| `ENVIRONMENT` | Set to `production` (already in `render.yaml`). Render also sets `RENDER=true`, which has the same effect. Needed so the user cookie is Secure. |
 | At least one chat key | `GROQ_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY` or `XKIRO_API_KEY`. |
 
 ### Provider keys
@@ -48,9 +58,8 @@ Set these in the Render dashboard (**Service → Environment**). Secrets use `sy
 | `EXA_API_KEY` | Deep Search. |
 | `CLOUDFLARE_API_TOKEN` | Cloudflare image generation (needs Workers AI access). |
 | `CLOUDFLARE_ACCOUNT_ID` | Cloudflare account for image generation. |
-| `UPSTASH_BLOB_TOKEN` | File uploads. |
 
-### Model and behavior settings (all optional)
+### Models, files and behavior (all optional)
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
@@ -58,17 +67,21 @@ Set these in the Render dashboard (**Service → Environment**). Secrets use `sy
 | `GEMINI_MODEL` | `gemini-3.8-flash` | Gemini model ID. |
 | `OPENROUTER_MODEL` | `openrouter/free` | OpenRouter model ID. |
 | `XKIRO_MODEL` | first free model | Default xKiro chat model. Must be a free model. |
-| `XKIRO_IMAGE_MODEL` | first free image model (`sensenova/sensenova-u1.5-lite`) | xKiro image model. Must be a free model. |
+| `XKIRO_IMAGE_MODEL` | first free image model (`sensenova/sensenova-u1.5-lite`) | Default xKiro image model. Must be a free model. |
 | `XKIRO_BASE_URL` | `https://api.xkiro.com/v1` | xKiro API base URL. |
 | `CLOUDFLARE_IMAGE_MODEL` | `@cf/black-forest-labs/flux-2-klein-4b` | Cloudflare image model. |
-| `IMAGE_DEFAULT_PROVIDER` | `cloudflare` | Image engine selected by default: `cloudflare` or `xkiro`. If that engine isn't configured, the other one is used. |
+| `IMAGE_DEFAULT_PROVIDER` | `cloudflare` | Image engine selected by default: `cloudflare` or `xkiro`. |
+| `SUPABASE_FILES_BUCKET` | `render-files` | Private Supabase Storage bucket for uploads. |
+| `FILE_MAX_SIZE` | `10485760` (10 MB) | Max size of one upload, in bytes. |
+| `FILE_USER_MAX_FILES` | `20` | Max files per visitor (0 = unlimited). |
+| `FILE_USER_MAX_TOTAL` | `52428800` (50 MB) | Max total storage per visitor, in bytes (0 = unlimited). |
 | `AI_TIMEZONE` | `America/New_York` | Time zone given to the AI for the current date/time. |
 | `OPENROUTER_SITE_URL` | empty | Sent to OpenRouter as the referer. |
 | `OPENROUTER_APP_NAME` | `Render AI` | Sent to OpenRouter as the app title. |
-| `ENVIRONMENT` | empty | Set to `production` or `render` to mark cookies secure. |
-| `SECURE_COOKIES` | `false` | Set to `true` to force secure cookies. |
-| `BLOB_MAX_FILE_SIZE` | `26214400` (25 MB) | Max upload size in bytes. |
+| `SECURE_COOKIES` | `false` | Force Secure cookies (already implied on Render). |
 | `PYTHON_VERSION` | `3.12.3` | Python version used by Render. |
+
+`UPSTASH_BLOB_TOKEN` and `BLOB_MAX_FILE_SIZE` are no longer used (files moved to Supabase Storage); you can delete them from Render.
 
 ### Usage limits (all optional)
 
@@ -88,11 +101,17 @@ Every provider has four limits. The variable name is the provider prefix plus th
 | `EXA` | Deep Search | 20 | 600 | 3 | 1 |
 | `CLOUDFLARE` | Cloudflare images | 90 | 2700 | 3 | 1 |
 
-The usage dashboard in the app shows each provider's remaining requests with progress bars (your limits and everyone's), plus the xKiro account's free-token allowance for the day.
+## xKiro
+
+[xKiro](https://xkiro.com) is an OpenAI-compatible gateway. The app loads its public model list and keeps only models marked `free`; paid models are rejected by the server even if someone sends the ID by hand. If xKiro is rate-limited or out of free allowance, chat falls back to OpenRouter or Groq when those keys are set. xKiro images are asynchronous, so the Image Generator shows progress and keeps checking (up to 5 minutes).
 
 ## Supabase
 
-The app stores usage, users, community chat and file metadata in Supabase (`render_users`, `render_usage`, `render_files`, `chat_users`, `chat_sessions`, `chat_messages`). `supabase_render_files.sql` creates the files table. If your `render_usage` table restricts which `provider` values are allowed, add `xkiro` and `xkiro_image`.
+Tables used: `render_users`, `render_usage`, `render_files`, `chat_users`, `chat_sessions`, `chat_messages`. If your `render_usage` table restricts which `provider` values are allowed, add `xkiro` and `xkiro_image`.
+
+## Staying small (Render free = 512 MB RAM)
+
+No front-end framework or chart library (donuts are inline SVG), a single static HTML file, short-lived caches for model lists, uploads capped at 10 MB and read once, generated images are never stored on the server, and chat memory lives in the browser.
 
 ## Run locally
 
