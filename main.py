@@ -97,7 +97,8 @@ class AskRequest(BaseModel):
     model: str = Field(min_length=1)
     prompt: str = Field(min_length=1, max_length=12000)
     mode: str = Field(default="chat", pattern="^(chat|fast-search|deep-search|code|deep-think)$")
-    history: list[dict] = Field(default_factory=list, max_length=20)
+    history: list[dict] = Field(default_factory=list, max_length=5)
+    chat_id: str | None = Field(default=None, max_length=64)
     xkiro_model: str | None = Field(default=None, max_length=120)
     file_path: str | None = Field(default=None, max_length=300)
     instructions: str | None = Field(default=None, max_length=500)
@@ -115,6 +116,10 @@ class ChatLoginRequest(BaseModel):
 
 class ChatMessageRequest(BaseModel):
     content: str = Field(min_length=1, max_length=2000)
+
+
+class AIChatHistoryRequest(BaseModel):
+    messages: list[dict] = Field(default_factory=list, max_length=5)
 
 
 class FileReadRequest(BaseModel):
@@ -521,10 +526,22 @@ def identify(response, cookie):
     return uid
 
 
+def usage_period(now=None):
+    now = now or datetime.now(timezone.utc)
+    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    if month_start.month == 12:
+        next_month = month_start.replace(year=month_start.year + 1, month=1)
+    else:
+        next_month = month_start.replace(month=month_start.month + 1)
+    return day_start, month_start, next_month
+
+
 def usage_counts(user_id, provider):
     now = datetime.now(timezone.utc)
-    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat().replace("+00:00", "Z")
-    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat().replace("+00:00", "Z")
+    day_start, month_start, _ = usage_period(now)
+    day_start = day_start.isoformat().replace("+00:00", "Z")
+    month_start = month_start.isoformat().replace("+00:00", "Z")
     active_start = (now - timedelta(hours=24)).isoformat().replace("+00:00", "Z")
 
     today = supabase_count("render_usage", {"provider": provider, "created_at": f"gte.{day_start}"})
@@ -543,7 +560,7 @@ def usage_counts(user_id, provider):
 
 def adaptive_remaining_from_counts(today, month, active, user_today, provider):
     daily, monthly = provider_limits(provider)
-    now = date.today()
+    now = datetime.now(timezone.utc).date()
     days_left = calendar.monthrange(now.year, now.month)[1] - now.day + 1
     monthly_remaining = max(0, monthly - month)
     sustainable = monthly_remaining // max(1, days_left)
@@ -996,6 +1013,8 @@ def xkiro_account_usage():
 @app.get("/api/usage/global")
 def global_usage():
     require_supabase()
+    now = datetime.now(timezone.utc)
+    _, month_start, next_month = usage_period(now)
     providers = {}
     for provider in DEFAULT_LIMITS:
         today, month, active, _, _ = usage_counts("", provider)
@@ -1010,18 +1029,28 @@ def global_usage():
             "monthly_remaining": max(0, monthly - month),
             "active_users": active,
         }
-    return {"providers": providers, "note": "These are Render AI tracked requests across all users. Provider-side billing/quota (Cloudflare, xKiro) is managed by that provider; these counters are only the app's tracked requests."}
+    return {
+        "providers": providers,
+        "period": {
+            "day_start": usage_period(now)[0].isoformat().replace("+00:00", "Z"),
+            "month_start": month_start.isoformat().replace("+00:00", "Z"),
+            "next_month_reset": next_month.isoformat().replace("+00:00", "Z"),
+        },
+        "note": "Counters are calculated from the current day/month only, so daily and monthly usage automatically roll over at the next period without retaining a stale counter.",
+    }
 
 
 @app.get("/api/usage")
 def usage(response: Response, render_ai_user: str | None = Cookie(default=None, alias=USER_COOKIE)):
     uid = identify(response, render_ai_user)
+    now = datetime.now(timezone.utc)
+    day_start, month_start, next_month = usage_period(now)
     providers = {}
     for provider in DEFAULT_LIMITS:
         today, month, active, user_today, user_month = usage_counts(uid, provider)
         daily, monthly = provider_limits(provider)
         hard_daily = user_daily_limit(provider)
-        days_in_month = calendar.monthrange(datetime.now(timezone.utc).year, datetime.now(timezone.utc).month)[1]
+        days_in_month = calendar.monthrange(now.year, now.month)[1]
         hard_monthly = hard_daily * days_in_month
         hard_daily_remaining = max(0, hard_daily - user_today)
         hard_monthly_remaining = max(0, hard_monthly - user_month)
@@ -1043,7 +1072,14 @@ def usage(response: Response, render_ai_user: str | None = Cookie(default=None, 
             "adaptive_remaining": adaptive,
             "per_minute_limit": user_per_minute_limit(provider),
         }
-    return {"providers": providers}
+    return {
+        "providers": providers,
+        "period": {
+            "day_start": day_start.isoformat().replace("+00:00", "Z"),
+            "month_start": month_start.isoformat().replace("+00:00", "Z"),
+            "next_month_reset": next_month.isoformat().replace("+00:00", "Z"),
+        },
+    }
 
 
 # ---------- files ----------
@@ -1141,6 +1177,165 @@ def xkiro_image_status(job_id: str):
     return {"status": "processing"}
 
 
+# ---------- saved AI chats ----------
+AI_CHAT_LIMIT = 3
+AI_CHAT_MESSAGE_LIMIT = 5
+AI_CHAT_TITLE_LIMIT = 64
+
+
+def validate_ai_chat_id(chat_id):
+    try:
+        return str(uuid.UUID(str(chat_id)))
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise HTTPException(400, "Invalid chat ID.") from exc
+
+
+def ai_chat_title(content):
+    title = re.sub(r"\\s+", " ", str(content or "")).strip()
+    return (title[:AI_CHAT_TITLE_LIMIT - 1] + "…") if len(title) > AI_CHAT_TITLE_LIMIT else (title or "New Chat")
+
+
+def get_ai_chat(user_id, chat_id):
+    chat_id = validate_ai_chat_id(chat_id)
+    r = supabase_request("GET", f"render_ai_chats?select=chat_id,user_id,title,created_at,updated_at&chat_id=eq.{chat_id}&user_id=eq.{user_id}&limit=1")
+    if r.status_code >= 300:
+        raise HTTPException(503, f"Could not load your saved chat. {supabase_error_detail(r)}")
+    rows = r.json()
+    if not rows:
+        raise HTTPException(404, "That saved chat no longer exists.")
+    return rows[0]
+
+
+def list_ai_chats(user_id):
+    r = supabase_request("GET", f"render_ai_chats?select=chat_id,title,created_at,updated_at&user_id=eq.{user_id}&order=updated_at.desc&limit={AI_CHAT_LIMIT}")
+    if r.status_code >= 300:
+        raise HTTPException(503, f"Could not load your saved chats. {supabase_error_detail(r)}")
+    return r.json()
+
+
+def create_ai_chat(user_id):
+    existing = list_ai_chats(user_id)
+    while len(existing) >= AI_CHAT_LIMIT:
+        oldest = existing[-1]
+        r = supabase_request("DELETE", f"render_ai_chats?chat_id=eq.{validate_ai_chat_id(oldest['chat_id'])}&user_id=eq.{user_id}")
+        if r.status_code >= 300:
+            raise HTTPException(503, f"Could not rotate out an older chat. {supabase_error_detail(r)}")
+        existing.pop()
+    chat_id = str(uuid.uuid4())
+    now = datetime.now(timezone.utc).isoformat()
+    r = supabase_request(
+        "POST",
+        "render_ai_chats",
+        json={"chat_id": chat_id, "user_id": user_id, "title": "New Chat", "created_at": now, "updated_at": now},
+        prefer="return=representation",
+    )
+    if r.status_code >= 300:
+        raise HTTPException(503, f"Could not create a saved chat. {supabase_error_detail(r)}")
+    rows = r.json()
+    return rows[0] if rows else {"chat_id": chat_id, "user_id": user_id, "title": "New Chat", "created_at": now, "updated_at": now}
+
+
+def read_ai_chat_history(user_id, chat_id):
+    chat = get_ai_chat(user_id, chat_id)
+    safe_id = validate_ai_chat_id(chat["chat_id"])
+    r = supabase_request("GET", f"render_ai_chat_messages?select=message_id,role,content,created_at&chat_id=eq.{safe_id}&user_id=eq.{user_id}&order=created_at.asc&message_id.asc&limit={AI_CHAT_MESSAGE_LIMIT}")
+    if r.status_code >= 300:
+        raise HTTPException(503, f"Could not load messages for this chat. {supabase_error_detail(r)}")
+    return chat, r.json()
+
+
+def touch_ai_chat(user_id, chat_id, content=None):
+    patch = {"updated_at": datetime.now(timezone.utc).isoformat()}
+    if content is not None:
+        chat = get_ai_chat(user_id, chat_id)
+        if chat.get("title") in {"", "New Chat", None}:
+            patch["title"] = ai_chat_title(content)
+    r = supabase_request("PATCH", f"render_ai_chats?chat_id=eq.{validate_ai_chat_id(chat_id)}&user_id=eq.{user_id}", json=patch)
+    if r.status_code >= 300:
+        raise HTTPException(503, f"Could not update your saved chat. {supabase_error_detail(r)}")
+
+
+def save_ai_chat_message(user_id, chat_id, role, content):
+    chat_id = validate_ai_chat_id(chat_id)
+    if role not in {"user", "assistant"}:
+        raise HTTPException(400, "Invalid saved-chat message role.")
+    content = str(content or "").strip()
+    if not content:
+        raise HTTPException(400, "Cannot save an empty chat message.")
+    if len(content) > 6000:
+        content = content[:6000]
+    get_ai_chat(user_id, chat_id)
+    r = supabase_request(
+        "POST",
+        "render_ai_chat_messages",
+        json={"chat_id": chat_id, "user_id": user_id, "role": role, "content": content},
+        prefer="return=minimal",
+    )
+    if r.status_code >= 300:
+        raise HTTPException(503, f"Could not save your chat message. {supabase_error_detail(r)}")
+    rows = supabase_request("GET", f"render_ai_chat_messages?select=message_id&chat_id=eq.{chat_id}&user_id=eq.{user_id}&order=created_at.desc&message_id.desc&limit=50")
+    if rows.status_code >= 300:
+        raise HTTPException(503, f"Could not maintain your saved chat. {supabase_error_detail(rows)}")
+    old_ids = [int(x["message_id"]) for x in rows.json()[AI_CHAT_MESSAGE_LIMIT:]]
+    if old_ids:
+        deleted = supabase_request("DELETE", f"render_ai_chat_messages?chat_id=eq.{chat_id}&user_id=eq.{user_id}&message_id=in.({','.join(map(str, old_ids))})")
+        if deleted.status_code >= 300:
+            raise HTTPException(503, f"Could not trim your saved chat. {supabase_error_detail(deleted)}")
+    touch_ai_chat(user_id, chat_id, content if role == "user" else None)
+
+
+def save_ai_chat_turn(user_id, chat_id, prompt, answer):
+    save_ai_chat_message(user_id, chat_id, "user", prompt)
+    save_ai_chat_message(user_id, chat_id, "assistant", answer)
+
+
+def replace_ai_chat_history(user_id, chat_id, messages):
+    chat_id = validate_ai_chat_id(chat_id)
+    get_ai_chat(user_id, chat_id)
+    cleaned = []
+    for item in messages[:AI_CHAT_MESSAGE_LIMIT]:
+        role = item.get("role") if isinstance(item, dict) else None
+        content = item.get("content") if isinstance(item, dict) else None
+        if role in {"user", "assistant"} and isinstance(content, str) and content.strip():
+            cleaned.append({"role": role, "content": content[:6000].strip()})
+    deleted = supabase_request("DELETE", f"render_ai_chat_messages?chat_id=eq.{chat_id}&user_id=eq.{user_id}")
+    if deleted.status_code >= 300:
+        raise HTTPException(503, f"Could not reset saved chat messages. {supabase_error_detail(deleted)}")
+    for item in cleaned:
+        r = supabase_request("POST", "render_ai_chat_messages", json={"chat_id": chat_id, "user_id": user_id, **item}, prefer="return=minimal")
+        if r.status_code >= 300:
+            raise HTTPException(503, f"Could not restore a saved chat. {supabase_error_detail(r)}")
+    first_user = next((m["content"] for m in cleaned if m["role"] == "user"), None)
+    touch_ai_chat(user_id, chat_id, first_user)
+    return cleaned
+
+
+@app.get("/api/ai/chats")
+def ai_chat_list(response: Response, render_ai_user: str | None = Cookie(default=None, alias=USER_COOKIE)):
+    uid = identify(response, render_ai_user)
+    return {"chats": list_ai_chats(uid), "chat_limit": AI_CHAT_LIMIT, "messages_per_chat": AI_CHAT_MESSAGE_LIMIT}
+
+
+@app.post("/api/ai/chats")
+def ai_chat_create(response: Response, render_ai_user: str | None = Cookie(default=None, alias=USER_COOKIE)):
+    uid = identify(response, render_ai_user)
+    return {"chat": create_ai_chat(uid)}
+
+
+@app.get("/api/ai/chats/{chat_id}")
+def ai_chat_get(chat_id: str, response: Response, render_ai_user: str | None = Cookie(default=None, alias=USER_COOKIE)):
+    uid = identify(response, render_ai_user)
+    chat, messages = read_ai_chat_history(uid, chat_id)
+    return {"chat": chat, "messages": messages}
+
+
+@app.post("/api/ai/chats/{chat_id}/history")
+def ai_chat_restore(chat_id: str, body: AIChatHistoryRequest, response: Response, render_ai_user: str | None = Cookie(default=None, alias=USER_COOKIE)):
+    uid = identify(response, render_ai_user)
+    messages = replace_ai_chat_history(uid, chat_id, body.messages)
+    return {"ok": True, "messages": messages}
+
+
 # ---------- chat ----------
 def add_file_context(uid, file_path, context):
     if not file_path:
@@ -1153,9 +1348,17 @@ def add_file_context(uid, file_path, context):
 def ask(body: AskRequest, response: Response, render_ai_user: str | None = Cookie(default=None, alias=USER_COOKIE)):
     selected_provider, selected_model = resolve_selected_chat_model(body.model)
     uid = identify(response, render_ai_user)
+    chat = create_ai_chat(uid) if not body.chat_id else get_ai_chat(uid, body.chat_id)
+    chat_id = chat["chat_id"]
+    _, saved_messages = read_ai_chat_history(uid, chat_id)
+    history = [
+        {"role": item["role"], "content": item["content"]}
+        for item in saved_messages[-AI_CHAT_MESSAGE_LIMIT:]
+        if item.get("role") in {"user", "assistant"} and isinstance(item.get("content"), str)
+    ]
     ai_provider = "groq" if body.mode == "code" else selected_provider
     requested_model = selected_model if ai_provider == "xkiro" else body.xkiro_model
-    resolve_model(ai_provider, requested_model)  # reject an unknown/non-free xKiro model before spending any quota
+    resolve_model(ai_provider, requested_model)
     search_provider = "tavily" if body.mode == "fast-search" else "exa" if body.mode == "deep-search" else None
     if search_provider:
         check_quota(uid, search_provider)
@@ -1163,20 +1366,29 @@ def ask(body: AskRequest, response: Response, render_ai_user: str | None = Cooki
     if search_provider:
         context, sources = search_web(body.prompt, deep=body.mode == "deep-search")
     context = add_file_context(uid, body.file_path, context)
-    actual_provider, answer, model_name = ask_with_fallback(ai_provider, body.prompt, context, body.mode, body.history, uid, requested_model, body.instructions)
+    actual_provider, answer, model_name = ask_with_fallback(ai_provider, body.prompt, context, body.mode, history, uid, requested_model, body.instructions)
     record_usage(uid, actual_provider, body.mode, model_name)
     if search_provider:
         record_usage(uid, search_provider, body.mode, search_provider)
-    return {"answer": answer, "sources": sources, "provider": actual_provider, "model": model_name}
+    save_ai_chat_turn(uid, chat_id, body.prompt, answer)
+    return {"answer": answer, "sources": sources, "provider": actual_provider, "model": model_name, "chat_id": chat_id}
 
 
 @app.post("/api/ask/stream")
 def ask_stream(body: AskRequest, response: Response, render_ai_user: str | None = Cookie(default=None, alias=USER_COOKIE)):
     selected_provider, selected_model = resolve_selected_chat_model(body.model)
     uid = identify(response, render_ai_user)
+    chat = create_ai_chat(uid) if not body.chat_id else get_ai_chat(uid, body.chat_id)
+    chat_id = chat["chat_id"]
+    _, saved_messages = read_ai_chat_history(uid, chat_id)
+    history = [
+        {"role": item["role"], "content": item["content"]}
+        for item in saved_messages[-AI_CHAT_MESSAGE_LIMIT:]
+        if item.get("role") in {"user", "assistant"} and isinstance(item.get("content"), str)
+    ]
     ai_provider = "groq" if body.mode == "code" else selected_provider
     requested_model = selected_model if ai_provider == "xkiro" else body.xkiro_model
-    model_name = resolve_model(ai_provider, requested_model)  # exact model ID; validated against xKiro's FREE catalog
+    model_name = resolve_model(ai_provider, requested_model)
     search_provider = "tavily" if body.mode == "fast-search" else "exa" if body.mode == "deep-search" else None
     if search_provider:
         check_quota(uid, search_provider)
@@ -1199,7 +1411,7 @@ def ask_stream(body: AskRequest, response: Response, render_ai_user: str | None 
 
     payload = {
         "model": model_name,
-        "messages": build_messages(body.prompt, context, body.mode, body.history, ai_provider, model_name, body.instructions),
+        "messages": build_messages(body.prompt, context, body.mode, history, ai_provider, model_name, body.instructions),
         "max_tokens": 3000,
         "stream": True,
     }
@@ -1208,25 +1420,25 @@ def ask_stream(body: AskRequest, response: Response, render_ai_user: str | None 
 
     def generate():
         collected = []
+        yield f"data: {json.dumps({'type':'meta','chat_id':chat_id})}\\n\\n"
         try:
             with httpx.stream("POST", cfg["url"], headers=headers, json=payload, timeout=90) as r:
                 if r.status_code != 200:
                     if r.status_code in {402, 429, 502, 503}:
                         try:
-                            actual_provider, fallback_text, fallback_model = ask_with_fallback(ai_provider, body.prompt, context, body.mode, body.history, uid, requested_model, body.instructions)
-                            print(f"[AI] stream fallback selected={ai_provider} used={actual_provider} model={fallback_model} mode={body.mode}", flush=True)
+                            actual_provider, fallback_text, fallback_model = ask_with_fallback(ai_provider, body.prompt, context, body.mode, history, uid, requested_model, body.instructions)
                             record_usage(uid, actual_provider, body.mode, fallback_model)
                             if search_provider:
                                 record_usage(uid, search_provider, body.mode, search_provider)
-                            yield f"data: {json.dumps({'type':'fallback','provider':actual_provider,'model':fallback_model,'from_provider':ai_provider,'text':fallback_text,'sources':sources})}\n\n"
+                            save_ai_chat_turn(uid, chat_id, body.prompt, fallback_text)
+                            yield f"data: {json.dumps({'type':'fallback','provider':actual_provider,'model':fallback_model,'from_provider':ai_provider,'text':fallback_text,'sources':sources,'chat_id':chat_id})}\\n\\n"
                         except HTTPException as e:
-                            yield f"data: {json.dumps({'type':'error','error':e.detail})}\n\n"
-                        yield "data: [DONE]\n\n"
+                            yield f"data: {json.dumps({'type':'error','error':e.detail})}\\n\\n"
+                        yield "data: [DONE]\\n\\n"
                         return
-
                     detail = provider_error_message(ai_provider, r.status_code, model_name)
-                    yield f"data: {json.dumps({'type':'error','error':detail + ' (status ' + str(r.status_code) + ').'})}\n\n"
-                    yield "data: [DONE]\n\n"
+                    yield f"data: {json.dumps({'type':'error','error':detail + ' (status ' + str(r.status_code) + ').'})}\\n\\n"
+                    yield "data: [DONE]\\n\\n"
                     return
 
                 for line in r.iter_lines():
@@ -1245,22 +1457,23 @@ def ask_stream(body: AskRequest, response: Response, render_ai_user: str | None 
                     delta = (choices[0].get("delta") or {}).get("content") or ""
                     if delta:
                         collected.append(delta)
-                        yield f"data: {json.dumps({'type':'token','text':delta})}\n\n"
+                        yield f"data: {json.dumps({'type':'token','text':delta})}\\n\\n"
 
-        except httpx.HTTPError as e:
+        except httpx.HTTPError:
             try:
-                actual_provider, fallback_text, fallback_model = ask_with_fallback(ai_provider, body.prompt, context, body.mode, body.history, uid, requested_model, body.instructions)
-                yield f"data: {json.dumps({'type':'fallback','provider':actual_provider,'model':fallback_model,'text':fallback_text,'sources':sources})}\n\n"
+                actual_provider, fallback_text, fallback_model = ask_with_fallback(ai_provider, body.prompt, context, body.mode, history, uid, requested_model, body.instructions)
                 record_usage(uid, actual_provider, body.mode, fallback_model)
                 if search_provider:
                     record_usage(uid, search_provider, body.mode, search_provider)
+                save_ai_chat_turn(uid, chat_id, body.prompt, fallback_text)
+                yield f"data: {json.dumps({'type':'fallback','provider':actual_provider,'model':fallback_model,'text':fallback_text,'sources':sources,'chat_id':chat_id})}\\n\\n"
             except HTTPException as err:
-                yield f"data: {json.dumps({'type':'error','error':err.detail})}\n\n"
-            yield "data: [DONE]\n\n"
+                yield f"data: {json.dumps({'type':'error','error':err.detail})}\\n\\n"
+            yield "data: [DONE]\\n\\n"
             return
         except Exception as e:
-            yield f"data: {json.dumps({'type':'error','error':'Unexpected server error: ' + str(e)})}\n\n"
-            yield "data: [DONE]\n\n"
+            yield f"data: {json.dumps({'type':'error','error':'Unexpected server error: ' + str(e)})}\\n\\n"
+            yield "data: [DONE]\\n\\n"
             return
 
         answer = "".join(collected)
@@ -1269,8 +1482,9 @@ def ask_stream(body: AskRequest, response: Response, render_ai_user: str | None 
             record_usage(uid, ai_provider, body.mode, model_name)
             if search_provider:
                 record_usage(uid, search_provider, body.mode, search_provider)
-        yield f"data: {json.dumps({'type':'done','sources':sources,'provider':ai_provider,'model':model_name,'fallback':False})}\n\n"
-        yield "data: [DONE]\n\n"
+            save_ai_chat_turn(uid, chat_id, body.prompt, answer)
+        yield f"data: {json.dumps({'type':'done','sources':sources,'provider':ai_provider,'model':model_name,'fallback':False,'chat_id':chat_id})}\\n\\n"
+        yield "data: [DONE]\\n\\n"
 
     stream_response = StreamingResponse(generate(), media_type="text/event-stream", headers={"Cache-Control":"no-cache","X-Accel-Buffering":"no"})
     stream_response.set_cookie(USER_COOKIE, signed_user_cookie(uid), max_age=31536000, httponly=True, samesite="strict", secure=IS_SECURE, path="/")
