@@ -902,8 +902,7 @@ def generate_cloudflare_image(prompt, user_id):
                 if image_b64.startswith("data:image/") and ";base64," in image_b64:
                     data_url = image_b64
                 else:
-                    data_url = f"{mime};base64,{image_b64}"
-                    data_url = "data:image/png;base64," + image_b64 if not data_url.startswith("data:") else data_url
+                    data_url = f"data:{mime};base64,{image_b64}"
                 record_usage(user_id, "cloudflare", "image", CLOUDFLARE_IMAGE_MODEL, 1)
                 return {"url": data_url, "model": CLOUDFLARE_IMAGE_MODEL}
 
