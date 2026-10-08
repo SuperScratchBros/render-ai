@@ -738,6 +738,20 @@ def ask_model(provider, prompt, context, mode, history=None, requested_model=Non
     return text, model_name
 
 
+def resolve_selected_chat_model(selection):
+    """Translate a UI model selection into (provider, exact model ID)."""
+    if selection.startswith("xkiro:"):
+        requested = selection.split(":", 1)[1].strip()
+        if not requested:
+            raise HTTPException(400, "Invalid xKiro model selection.")
+        if not clean_key(os.getenv("XKIRO_API_KEY", "")):
+            raise HTTPException(503, "xKiro is not configured. Add XKIRO_API_KEY.")
+        return "xkiro", requested
+    if selection not in MODELS or selection == "xkiro":
+        raise HTTPException(400, "Choose a valid AI model before sending a message.")
+    return selection, None
+
+
 def ask_with_fallback(provider, prompt, context, mode, history, user_id, requested_model=None, instructions=None):
     providers = [provider]
     if provider != "openrouter" and clean_key(os.getenv("OPENROUTER_API_KEY", "")):
@@ -868,8 +882,20 @@ def config():
         "xkiro": bool(clean_key(os.getenv("XKIRO_API_KEY", ""))),
     }
     image_default = IMAGE_DEFAULT_PROVIDER if image_providers.get(IMAGE_DEFAULT_PROVIDER) else next((k for k, v in image_providers.items() if v), IMAGE_DEFAULT_PROVIDER)
+    chat_models = [{"id": k, "label": v["label"], "model": v["model"], "configured": bool(clean_key(os.getenv(v["key"], "")))} for k, v in MODELS.items() if k != "xkiro"]
+    xkiro_key_configured = bool(clean_key(os.getenv("XKIRO_API_KEY", "")))
+    if xkiro_key_configured:
+        for xm in xkiro_catalog():
+            chat_models.append({
+                "id": "xkiro:" + xm["id"],
+                "label": xm.get("label") or xm["id"],
+                "model": xm["id"],
+                "configured": True,
+                "provider": "xkiro",
+                "access_tier": "free",
+            })
     return {
-        "models": [{"id": k, "label": v["label"], "model": v["model"], "configured": bool(clean_key(os.getenv(v["key"], "")))} for k, v in MODELS.items()],
+        "models": chat_models,
         "features": {"fast_search": bool(TAVILY_API_KEY), "deep_search": bool(EXA_API_KEY), "code": bool(clean_key(os.getenv("GROQ_API_KEY", ""))), "deep_think": True, "image": any(image_providers.values()), "image_providers": image_providers, "image_default": image_default},
         "image_models": {"cloudflare": CLOUDFLARE_IMAGE_MODEL},
         "files": {"max_size": FILE_MAX_SIZE, "max_files": FILE_USER_MAX_FILES, "max_total": FILE_USER_MAX_TOTAL, "max_attach_bytes": MAX_ATTACH_BYTES, "text_exts": sorted(TEXT_FILE_EXTS)},
@@ -1069,11 +1095,11 @@ def add_file_context(uid, file_path, context):
 
 @app.post("/api/ask")
 def ask(body: AskRequest, response: Response, render_ai_user: str | None = Cookie(default=None, alias=USER_COOKIE)):
-    if body.model not in MODELS:
-        raise HTTPException(400, "You must choose a model before chatting.")
+    selected_provider, selected_model = resolve_selected_chat_model(body.model)
     uid = identify(response, render_ai_user)
-    ai_provider = "groq" if body.mode == "code" else body.model
-    resolve_model(ai_provider, body.xkiro_model)  # reject an unknown/non-free xKiro model before spending any quota
+    ai_provider = "groq" if body.mode == "code" else selected_provider
+    requested_model = selected_model if ai_provider == "xkiro" else body.xkiro_model
+    resolve_model(ai_provider, requested_model)  # reject an unknown/non-free xKiro model before spending any quota
     search_provider = "tavily" if body.mode == "fast-search" else "exa" if body.mode == "deep-search" else None
     if search_provider:
         check_quota(uid, search_provider)
@@ -1090,11 +1116,11 @@ def ask(body: AskRequest, response: Response, render_ai_user: str | None = Cooki
 
 @app.post("/api/ask/stream")
 def ask_stream(body: AskRequest, response: Response, render_ai_user: str | None = Cookie(default=None, alias=USER_COOKIE)):
-    if body.model not in MODELS:
-        raise HTTPException(400, "You must choose a model before chatting.")
+    selected_provider, selected_model = resolve_selected_chat_model(body.model)
     uid = identify(response, render_ai_user)
-    ai_provider = "groq" if body.mode == "code" else body.model
-    model_name = resolve_model(ai_provider, body.xkiro_model)  # exact model ID; validated against xKiro's FREE catalog
+    ai_provider = "groq" if body.mode == "code" else selected_provider
+    requested_model = selected_model if ai_provider == "xkiro" else body.xkiro_model
+    model_name = resolve_model(ai_provider, requested_model)  # exact model ID; validated against xKiro's FREE catalog
     search_provider = "tavily" if body.mode == "fast-search" else "exa" if body.mode == "deep-search" else None
     if search_provider:
         check_quota(uid, search_provider)
