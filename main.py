@@ -848,47 +848,81 @@ def ask_with_fallback(provider, prompt, context, mode, history, user_id, request
 
 
 def generate_cloudflare_image(prompt, user_id):
+    """Generate a FLUX image through Cloudflare Workers AI's REST endpoint."""
     if len(prompt) > 2048:
         raise HTTPException(400, "Image prompts can be at most 2048 characters.")
     if not CLOUDFLARE_API_TOKEN or not CLOUDFLARE_ACCOUNT_ID:
         raise HTTPException(503, "Cloudflare Workers AI is not configured. Add CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID.")
     check_quota(user_id, "cloudflare")
 
-    endpoint = f"https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai/run/{CLOUDFLARE_IMAGE_MODEL}"
-    try:
-        r = httpx.post(
-            endpoint,
-            headers={"Authorization": f"Bearer {CLOUDFLARE_API_TOKEN}"},
-            files={"prompt": (None, prompt), "width": (None, "768"), "height": (None, "768")},
-            timeout=120,
-        )
-    except httpx.HTTPError as exc:
-        raise HTTPException(502, "Cloudflare image generation failed: the Workers AI API could not be reached.") from exc
+    endpoint = f"https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai/run/{quote(CLOUDFLARE_IMAGE_MODEL, safe='@/-_')}"
+    last_status = None
+    last_detail = ""
+    for attempt in range(3):
+        try:
+            # FLUX.2 Klein expects multipart/form-data, even when only a text prompt is supplied.
+            r = httpx.post(
+                endpoint,
+                headers={"Authorization": f"Bearer {CLOUDFLARE_API_TOKEN}"},
+                files={"prompt": (None, prompt)},
+                data={"width": "1024", "height": "1024"},
+                timeout=120,
+            )
+        except httpx.HTTPError as exc:
+            if attempt == 2:
+                raise HTTPException(502, "Cloudflare image generation failed: the Workers AI API could not be reached.") from exc
+            time.sleep(1.0 * (attempt + 1))
+            continue
 
-    if r.status_code == 401:
-        raise HTTPException(502, "Cloudflare rejected the API token (HTTP 401). Check CLOUDFLARE_API_TOKEN in Render.")
-    if r.status_code == 403:
-        raise HTTPException(502, "Cloudflare denied the Workers AI request (HTTP 403). Check the token has Workers AI image-generation access.")
-    if r.status_code == 429:
-        raise HTTPException(429, "Cloudflare Workers AI is rate-limited right now.")
-    if r.status_code < 200 or r.status_code >= 300:
+        last_status = r.status_code
+        if 200 <= r.status_code < 300:
+            content_type = (r.headers.get("content-type") or "").split(";")[0].strip().lower()
+            image_b64 = None
+            mime = content_type if content_type.startswith("image/") else "image/png"
+
+            # Depending on the Workers AI REST response path, the image may arrive as JSON/base64
+            # or directly as image bytes. Support both forms.
+            if "application/json" in content_type or r.text[:1] in "{[":
+                try:
+                    data = r.json()
+                except (ValueError, TypeError):
+                    data = None
+                if isinstance(data, dict):
+                    result = data.get("result") if isinstance(data.get("result"), dict) else data
+                    candidate = result.get("image") or result.get("image_base64") or data.get("image")
+                    if isinstance(candidate, str) and candidate.strip():
+                        image_b64 = candidate.strip()
+                if not image_b64:
+                    last_detail = (r.text or "")[:900]
+            else:
+                import base64
+                image_b64 = base64.b64encode(r.content).decode("ascii")
+
+            if image_b64:
+                if image_b64.startswith("data:image/") and ";base64," in image_b64:
+                    data_url = image_b64
+                else:
+                    data_url = f"{mime};base64,{image_b64}"
+                    data_url = "data:image/png;base64," + image_b64 if not data_url.startswith("data:") else data_url
+                record_usage(user_id, "cloudflare", "image", CLOUDFLARE_IMAGE_MODEL, 1)
+                return {"url": data_url, "model": CLOUDFLARE_IMAGE_MODEL}
+
+            raise HTTPException(502, "Cloudflare completed the image request but returned no usable image data.")
+
         detail = (r.text or "").strip()
         if len(detail) > 700:
             detail = detail[:700] + "..."
+        last_detail = detail
+        if r.status_code in {408, 425, 429, 500, 502, 503, 504} and attempt < 2:
+            time.sleep(1.0 * (attempt + 1))
+            continue
+        if r.status_code == 401:
+            raise HTTPException(502, "Cloudflare rejected the API token (HTTP 401). Check CLOUDFLARE_API_TOKEN in Render.")
+        if r.status_code == 403:
+            raise HTTPException(502, "Cloudflare denied the Workers AI request (HTTP 403). Check the token has Workers AI image-generation access.")
         raise HTTPException(502, f"Cloudflare image generation failed (HTTP {r.status_code}). {detail or 'Cloudflare returned no error details.'}")
 
-    try:
-        data = r.json()
-        image_b64 = ((data.get("result") or {}).get("image"))
-    except (ValueError, TypeError) as exc:
-        raise HTTPException(502, "Cloudflare returned an invalid image response.") from exc
-
-    if not isinstance(image_b64, str) or not image_b64.strip():
-        detail = json.dumps(data, ensure_ascii=False)[:900]
-        raise HTTPException(502, f"Cloudflare completed the request but returned no image data. Response: {detail}")
-
-    record_usage(user_id, "cloudflare", "image", CLOUDFLARE_IMAGE_MODEL, 1)
-    return {"url": f"data:image/png;base64,{image_b64}", "model": CLOUDFLARE_IMAGE_MODEL}
+    raise HTTPException(502, f"Cloudflare image generation failed (HTTP {last_status or 500}). {last_detail or 'Try again shortly.'}")
 
 
 def xkiro_headers():
