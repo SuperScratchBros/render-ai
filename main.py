@@ -5,6 +5,7 @@ import hmac
 import json
 import os
 import secrets
+import threading
 import time
 import uuid
 from datetime import date, datetime, timezone, timedelta
@@ -35,6 +36,35 @@ def env_int(name, default):
         return max(0, int(os.getenv(name, str(default))))
     except ValueError:
         return default
+
+
+# ---------- daily reset (uploaded files and community chat messages are deleted every day) ----------
+def _load_reset_tz():
+    name = (os.getenv("RESET_TIMEZONE") or os.getenv("AI_TIMEZONE") or "America/New_York").strip()
+    try:
+        return name, ZoneInfo(name)
+    except Exception:
+        return "UTC", timezone.utc
+
+
+RESET_TZ_NAME, RESET_TZ = _load_reset_tz()
+
+
+def iso_z(dt):
+    return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def day_start_local():
+    return datetime.now(RESET_TZ).replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def cutoff_iso():
+    """Start of today (midnight in RESET_TIMEZONE) in UTC. Anything created before this is expired."""
+    return iso_z(day_start_local())
+
+
+def next_reset_iso():
+    return iso_z(day_start_local() + timedelta(days=1))
 
 
 XKIRO_BASE_URL = (os.getenv("XKIRO_BASE_URL", "").strip() or "https://api.xkiro.com/v1").rstrip("/")
@@ -397,6 +427,21 @@ def storage_delete(path):
         pass
 
 
+def storage_delete_many(paths):
+    """Delete several objects at once. True when they are gone (or the bucket/objects never existed)."""
+    try:
+        r = httpx.request(
+            "DELETE",
+            f"{SUPABASE_URL}/storage/v1/object/{FILES_BUCKET}",
+            headers=storage_headers({"Content-Type": "application/json"}),
+            json={"prefixes": paths},
+            timeout=30,
+        )
+    except httpx.HTTPError:
+        return False
+    return r.status_code < 300 or r.status_code == 404
+
+
 def storage_signed_url(path, filename=None, download=False):
     try:
         r = httpx.post(
@@ -421,8 +466,67 @@ def storage_signed_url(path, filename=None, download=False):
     return url
 
 
+# ---------- daily cleanup: files and community chat messages from before today are deleted ----------
+_purge_state = {"at": 0.0}
+_purge_lock = threading.Lock()
+
+
+def purge_expired():
+    """Delete every uploaded file (storage object + record) and every community chat message created before today's midnight."""
+    cutoff = cutoff_iso()
+    removed = 0
+    for _ in range(30):
+        q = supabase_request("GET", f"render_files?select=path&created_at=lt.{cutoff}&limit=100")
+        rows = q.json() if q.status_code < 300 else []
+        paths = [r["path"] for r in rows if isinstance(r.get("path"), str)]
+        if not paths:
+            break
+        if not storage_delete_many(paths):
+            break  # keep the records so the next run retries the storage delete
+        d = supabase_request("DELETE", "render_files?path=in.(" + ",".join(quote(p, safe="/") for p in paths) + ")")
+        if d.status_code >= 300:
+            break
+        removed += len(paths)
+    m = supabase_request("DELETE", f"chat_messages?created_at=lt.{cutoff}")
+    print(f"[cleanup] before {cutoff}: removed {removed} file(s); chat messages status {m.status_code}", flush=True)
+
+
+def maybe_purge(force=False):
+    """Run the cleanup in a background thread at most every 10 minutes (any request can trigger it)."""
+    if not (SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY):
+        return
+    now = time.time()
+    if not force and now - _purge_state["at"] < 600:
+        return
+    if not _purge_lock.acquire(blocking=False):
+        return
+    _purge_state["at"] = now
+
+    def run():
+        try:
+            purge_expired()
+        except Exception as exc:  # never crash the server because of cleanup
+            print(f"[cleanup] failed: {exc}", flush=True)
+        finally:
+            _purge_lock.release()
+
+    threading.Thread(target=run, daemon=True).start()
+
+
+def _purge_loop():
+    while True:
+        time.sleep(900)
+        maybe_purge()
+
+
+@app.on_event("startup")
+def start_cleanup():
+    maybe_purge(force=True)
+    threading.Thread(target=_purge_loop, daemon=True).start()
+
+
 def file_usage(user_id):
-    q = supabase_request("GET", f"render_files?select=size&user_id=eq.{user_id}&limit=1000")
+    q = supabase_request("GET", f"render_files?select=size&user_id=eq.{user_id}&created_at=gte.{cutoff_iso()}&limit=1000")
     rows = q.json() if q.status_code < 300 else []
     return len(rows), sum(int(r.get("size") or 0) for r in rows)
 
@@ -454,9 +558,9 @@ def store_file(user_id, filename, content_type, data):
 
 def attached_file_text(user_id, path):
     verify_user_file_path(user_id, path)
-    q = supabase_request("GET", f"render_files?select=filename,size&user_id=eq.{user_id}&path=eq.{path}&limit=1")
+    q = supabase_request("GET", f"render_files?select=filename,size&user_id=eq.{user_id}&path=eq.{path}&created_at=gte.{cutoff_iso()}&limit=1")
     if q.status_code >= 300 or not q.json():
-        raise HTTPException(404, "Attached file not found.")
+        raise HTTPException(404, "Attached file not found (files are deleted every day).")
     f = q.json()[0]
     if Path(f["filename"]).suffix.lower() not in TEXT_FILE_EXTS:
         raise HTTPException(400, "Only text or code files can be attached to a chat message.")
@@ -516,6 +620,7 @@ def identify(response, cookie):
     uid = verified_user_id(cookie)
     ensure_render_user(uid)
     response.set_cookie(USER_COOKIE, signed_user_cookie(uid), max_age=31536000, httponly=True, samesite="strict", secure=IS_SECURE, path="/")
+    maybe_purge()  # first request after midnight clears yesterday's files and chat messages
     return uid
 
 
@@ -873,6 +978,7 @@ def config():
         "features": {"fast_search": bool(TAVILY_API_KEY), "deep_search": bool(EXA_API_KEY), "code": bool(clean_key(os.getenv("GROQ_API_KEY", ""))), "deep_think": True, "image": any(image_providers.values()), "image_providers": image_providers, "image_default": image_default},
         "image_models": {"cloudflare": CLOUDFLARE_IMAGE_MODEL},
         "files": {"max_size": FILE_MAX_SIZE, "max_files": FILE_USER_MAX_FILES, "max_total": FILE_USER_MAX_TOTAL, "max_attach_bytes": MAX_ATTACH_BYTES, "text_exts": sorted(TEXT_FILE_EXTS)},
+        "reset": {"timezone": RESET_TZ_NAME, "day": day_start_local().strftime("%Y-%m-%d"), "next_reset": next_reset_iso()},
     }
 
 
@@ -983,20 +1089,20 @@ async def file_upload(request: Request, response: Response, filename: str = Quer
 @app.get("/api/files")
 def files_list(response: Response, render_ai_user: str | None = Cookie(default=None, alias=USER_COOKIE)):
     uid = identify(response, render_ai_user)
-    q = supabase_request("GET", f"render_files?select=id,path,filename,content_type,size,created_at&user_id=eq.{uid}&order=created_at.desc&limit=100")
+    q = supabase_request("GET", f"render_files?select=id,path,filename,content_type,size,created_at&user_id=eq.{uid}&created_at=gte.{cutoff_iso()}&order=created_at.desc&limit=100")
     if q.status_code >= 300:
         raise HTTPException(503, f"Could not load your files. {supabase_error_detail(q)}")
     files = q.json()
-    return {"files": files, "usage": {"count": len(files), "bytes": sum(int(f.get("size") or 0) for f in files), "max_files": FILE_USER_MAX_FILES, "max_total": FILE_USER_MAX_TOTAL, "max_size": FILE_MAX_SIZE}}
+    return {"files": files, "usage": {"count": len(files), "bytes": sum(int(f.get("size") or 0) for f in files), "max_files": FILE_USER_MAX_FILES, "max_total": FILE_USER_MAX_TOTAL, "max_size": FILE_MAX_SIZE}, "reset": {"timezone": RESET_TZ_NAME, "next_reset": next_reset_iso()}}
 
 
 @app.post("/api/files/read-url")
 def file_read_url(body: FileReadRequest, response: Response, render_ai_user: str | None = Cookie(default=None, alias=USER_COOKIE)):
     uid = identify(response, render_ai_user)
     path = verify_user_file_path(uid, body.path)
-    q = supabase_request("GET", f"render_files?select=filename,content_type,path&user_id=eq.{uid}&path=eq.{path}&limit=1")
+    q = supabase_request("GET", f"render_files?select=filename,content_type,path&user_id=eq.{uid}&path=eq.{path}&created_at=gte.{cutoff_iso()}&limit=1")
     if q.status_code >= 300 or not q.json():
-        raise HTTPException(404, "File not found.")
+        raise HTTPException(404, "File not found (files are deleted every day).")
     f = q.json()[0]
     return {"url": storage_signed_url(path, f["filename"], body.download), "filename": f["filename"], "content_type": f["content_type"]}
 
@@ -1195,7 +1301,7 @@ def ask_stream(body: AskRequest, response: Response, render_ai_user: str | None 
     return stream_response
 
 
-# ---------- community chat ----------
+# ---------- community chat (messages are deleted every day) ----------
 @app.post("/api/chat/login")
 def chat_login(body: ChatLoginRequest, response: Response):
     require_supabase()
@@ -1236,10 +1342,11 @@ def chat_me(nlgep_chat_session: str | None = Cookie(default=None)):
 @app.get("/api/chat/messages")
 def chat_messages(nlgep_chat_session: str | None = Cookie(default=None)):
     get_chat_session(nlgep_chat_session)
-    r = supabase_request("GET", "chat_messages?select=message_id,username,content,created_at&order=created_at.asc&limit=100")
+    maybe_purge()
+    r = supabase_request("GET", f"chat_messages?select=message_id,username,content,created_at&created_at=gte.{cutoff_iso()}&order=created_at.asc&limit=100")
     if r.status_code >= 300:
         raise HTTPException(503, f"Could not load community chat. {supabase_error_detail(r)}")
-    return {"messages": r.json()}
+    return {"messages": r.json(), "reset": {"timezone": RESET_TZ_NAME, "next_reset": next_reset_iso()}}
 
 
 @app.post("/api/chat/messages")
