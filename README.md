@@ -92,7 +92,7 @@ The usage dashboard in the app shows each provider's remaining requests with pro
 
 ## Supabase
 
-The app stores usage, users, community chat and file metadata in Supabase (`render_users`, `render_usage`, `render_files`, `chat_users`, `chat_sessions`, `chat_messages`). `supabase_render_files.sql` creates the files table. If your `render_usage` table restricts which `provider` values are allowed, add `xkiro` and `xkiro_image`.
+The app stores usage, users, community chat and file metadata in Supabase (`render_users`, `render_usage`, `render_files`, `chat_users`, `chat_sessions`, `chat_messages`). Run `supabase_schema.sql` once in the Supabase SQL editor for a fresh setup. `supabase_render_files.sql` is also available when only the file table is missing.
 
 ## Run locally
 
