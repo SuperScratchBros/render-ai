@@ -48,7 +48,7 @@ Set these in the Render dashboard (**Service → Environment**). Secrets use `sy
 | `EXA_API_KEY` | Deep Search. |
 | `CLOUDFLARE_API_TOKEN` | Cloudflare image generation (needs Workers AI access). |
 | `CLOUDFLARE_ACCOUNT_ID` | Cloudflare account for image generation. |
-| `UPSTASH_BLOB_TOKEN` | File uploads. |
+| `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` | File metadata and private file storage. |
 
 ### Model and behavior settings (all optional)
 
