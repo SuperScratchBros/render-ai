@@ -1193,7 +1193,7 @@ def ask_stream(body: AskRequest, response: Response, render_ai_user: str | None 
 
         except httpx.HTTPError as e:
             try:
-                actual_provider, fallback_text, fallback_model = ask_with_fallback(ai_provider, body.prompt, context, body.mode, body.history, uid, body.xkiro_model, body.instructions)
+                actual_provider, fallback_text, fallback_model = ask_with_fallback(ai_provider, body.prompt, context, body.mode, body.history, uid, requested_model, body.instructions)
                 yield f"data: {json.dumps({'type':'fallback','provider':actual_provider,'model':fallback_model,'text':fallback_text,'sources':sources})}\n\n"
                 record_usage(uid, actual_provider, body.mode, fallback_model)
                 if search_provider:
