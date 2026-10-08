@@ -815,7 +815,7 @@ def generate_cloudflare_image(prompt, user_id):
         raise HTTPException(502, f"Cloudflare completed the request but returned no image data. Response: {detail}")
 
     record_usage(user_id, "cloudflare", "image", CLOUDFLARE_IMAGE_MODEL, 1)
-    return {"url": f"data:image/jpeg;base64,{image_b64}", "model": CLOUDFLARE_IMAGE_MODEL}
+    return {"url": f"data:image/png;base64,{image_b64}", "model": CLOUDFLARE_IMAGE_MODEL}
 
 
 def xkiro_headers():
@@ -1107,7 +1107,7 @@ def ask(body: AskRequest, response: Response, render_ai_user: str | None = Cooki
     if search_provider:
         context, sources = search_web(body.prompt, deep=body.mode == "deep-search")
     context = add_file_context(uid, body.file_path, context)
-    actual_provider, answer, model_name = ask_with_fallback(ai_provider, body.prompt, context, body.mode, body.history, uid, body.xkiro_model, body.instructions)
+    actual_provider, answer, model_name = ask_with_fallback(ai_provider, body.prompt, context, body.mode, body.history, uid, requested_model, body.instructions)
     record_usage(uid, actual_provider, body.mode, model_name)
     if search_provider:
         record_usage(uid, search_provider, body.mode, search_provider)
@@ -1157,7 +1157,7 @@ def ask_stream(body: AskRequest, response: Response, render_ai_user: str | None 
                 if r.status_code != 200:
                     if r.status_code in {402, 429, 502, 503}:
                         try:
-                            actual_provider, fallback_text, fallback_model = ask_with_fallback(ai_provider, body.prompt, context, body.mode, body.history, uid, body.xkiro_model, body.instructions)
+                            actual_provider, fallback_text, fallback_model = ask_with_fallback(ai_provider, body.prompt, context, body.mode, body.history, uid, requested_model, body.instructions)
                             print(f"[AI] stream fallback selected={ai_provider} used={actual_provider} model={fallback_model} mode={body.mode}", flush=True)
                             record_usage(uid, actual_provider, body.mode, fallback_model)
                             if search_provider:
