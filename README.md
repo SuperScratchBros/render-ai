@@ -10,8 +10,8 @@ A small AI web app (FastAPI + a single `index.html`) that runs on Render. It off
 | Fast Search | Tavily |
 | Deep Search | Exa |
 | Write Code | Groq |
-| Image generation | **Switchable:** Cloudflare Workers AI (FLUX) or xKiro (free image model) |
-| File uploads | Upstash Blob |
+| Image generation | **Two options:** Cloudflare Workers AI (FLUX) or xKiro (free image model) |
+| File uploads | Supabase Storage |
 | Usage, limits and community chat | Supabase |
 
 ### xKiro
