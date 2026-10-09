@@ -86,11 +86,6 @@ _EXTRA_CODE = re.compile(r"coder|codestral|devstral|codegemma|laguna|-code", re.
 IMAGE_MODELS = {
     "black-forest-labs/flux.1-schnell": ("FLUX.1 Schnell", "Fastest (4 steps)"),
     "black-forest-labs/flux.1-dev": ("FLUX.1 Dev", "Highest FLUX.1 quality; non-commercial license"),
-    "black-forest-labs/flux.2-klein-4b", ("FLUX.2 Klein 4B", "Newest FLUX, fast (4 steps)")
-    if False else None,
-} if False else {
-    "black-forest-labs/flux.1-schnell": ("FLUX.1 Schnell", "Fastest (4 steps)"),
-    "black-forest-labs/flux.1-dev": ("FLUX.1 Dev", "Highest FLUX.1 quality; non-commercial license"),
     "black-forest-labs/flux.2-klein-4b": ("FLUX.2 Klein 4B", "Newest FLUX, fast (4 steps)"),
     "stabilityai/stable-diffusion-3-medium": ("Stable Diffusion 3 Medium", "Good prompt following"),
 }
