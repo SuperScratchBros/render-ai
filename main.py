@@ -163,6 +163,8 @@ NVIDIA_FREE_CHAT_MODELS = [
     {"id": "meta/muse-glimmer-30b", "source": "Meta", "name": "Muse Glimmer 30B", "code": False},
     {"id": "nvidia/nemotron-3-ultra-550b-a55b", "source": "NVIDIA", "name": "Nemotron 3 Ultra 550B A55B", "code": True},
     {"id": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning", "source": "NVIDIA", "name": "Nemotron 3 Nano Omni 30B A3B Reasoning", "code": False},
+    {"id": "nvidia/ising-calibration-1.5-31b", "source": "NVIDIA", "name": "Ising Calibration 1.5 31B", "code": False},
+    {"id": "nvidia/ising-calibration-1-35b-a3b", "source": "NVIDIA", "name": "Ising Calibration 1 35B A3B", "code": False},
     {"id": "nvidia/nemotron-3-super-120b-a12b", "source": "NVIDIA", "name": "Nemotron 3 Super 120B A12B", "code": True},
     {"id": "openai/gpt-oss-20b", "source": "OpenAI", "name": "GPT-OSS 20B", "code": True},
     {"id": "meta/llama-3.2-11b-vision-instruct", "source": "Meta", "name": "Llama 3.2 11B Vision Instruct", "code": False},
