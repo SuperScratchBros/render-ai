@@ -53,7 +53,7 @@ MODELS = {
     # xKiro is a multi-model gateway. Only its FREE models are offered. "model" is the optional
     # default (XKIRO_MODEL); the person can pick any free model from xKiro's live catalog in the UI.
     "xkiro": {"label": "xKiro: free models", "model": os.getenv("XKIRO_MODEL", "").strip(), "url": f"{XKIRO_BASE_URL}/chat/completions", "key": "XKIRO_API_KEY"},
-    "nvidia": {"label": "NVIDIA NIM", "model": "deepseek-ai/deepseek-v4.1-flash", "url": f"{NVIDIA_BASE_URL}/chat/completions", "key": "NVIDIA_API_KEY"},
+    "nvidia": {"label": "NVIDIA NIM", "model": "deepseek-ai/deepseek-v4-flash", "url": f"{NVIDIA_BASE_URL}/chat/completions", "key": "NVIDIA_API_KEY"},
 }
 
 # Friendly names + groupings used by the usage dashboard.
@@ -152,29 +152,66 @@ _xkiro_image_cache = {"at": 0.0, "models": []}
 _xkiro_usage_cache = {"at": 0.0, "data": None}
 _nvidia_cache = {"at": 0.0, "models": []}
 
-# NVIDIA Build free inference endpoints that support chat/text generation.
-# Non-chat services (embeddings, classifiers, TTS/ASR, tabular and video-only models) are excluded.
+# Fallback list of NVIDIA Build chat endpoints, used only when NVIDIA's live model index (GET /v1/models)
+# cannot be reached. With NVIDIA_API_KEY set, the app lists EVERY chat-capable model NVIDIA returns.
 NVIDIA_FREE_CHAT_MODELS = [
-    {"id": "deepseek-ai/deepseek-v4.1-flash", "source": "DeepSeek AI", "name": "V4.1 Flash", "code": True},
-    {"id": "z-ai/glm-5.3", "source": "Z.ai", "name": "GLM-5.3", "code": True},
-    {"id": "z-ai/glm-5.3-flash", "source": "Z.ai", "name": "GLM-5.3 Flash", "code": True},
-    {"id": "moonshotai/kimi-k3", "source": "Moonshot AI", "name": "Kimi K3", "code": True},
-    {"id": "nvidia/nemotron-3.5-lightning-30b-a3b", "source": "NVIDIA", "name": "Nemotron 3.5 Lightning 30B A3B", "code": True},
-    {"id": "meta/muse-glimmer-30b", "source": "Meta", "name": "Muse Glimmer 30B", "code": False},
-    {"id": "nvidia/nemotron-3-ultra-550b-a55b", "source": "NVIDIA", "name": "Nemotron 3 Ultra 550B A55B", "code": True},
-    {"id": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning", "source": "NVIDIA", "name": "Nemotron 3 Nano Omni 30B A3B Reasoning", "code": False},
-    {"id": "nvidia/ising-calibration-1.5-31b", "source": "NVIDIA", "name": "Ising Calibration 1.5 31B", "code": False},
-    {"id": "nvidia/ising-calibration-1-35b-a3b", "source": "NVIDIA", "name": "Ising Calibration 1 35B A3B", "code": False},
-    {"id": "nvidia/nemotron-3-super-120b-a12b", "source": "NVIDIA", "name": "Nemotron 3 Super 120B A12B", "code": True},
-    {"id": "openai/gpt-oss-20b", "source": "OpenAI", "name": "GPT-OSS 20B", "code": True},
-    {"id": "meta/llama-3.2-11b-vision-instruct", "source": "Meta", "name": "Llama 3.2 11B Vision Instruct", "code": False},
-    {"id": "meta/llama-3.2-90b-vision-instruct", "source": "Meta", "name": "Llama 3.2 90B Vision Instruct", "code": False},
-    {"id": "google/diffusiongemma-26b-a4b-it", "source": "Google", "name": "DiffusionGemma 26B A4B IT", "code": False},
-    {"id": "google/gemma-4-31b-it", "source": "Google", "name": "Gemma 4 31B IT", "code": True},
-    {"id": "poolside/laguna-xs-2.1", "source": "Poolside", "name": "Laguna XS 2.1", "code": True},
-    {"id": "mistralai/mistral-nemotron", "source": "Mistral AI", "name": "Mistral Nemotron", "code": True},
+    {"id": "deepseek-ai/deepseek-v4-flash", "source": "DeepSeek AI", "name": "V4 Flash"},
+    {"id": "deepseek-ai/deepseek-v4-pro", "source": "DeepSeek AI", "name": "V4 Pro"},
+    {"id": "z-ai/glm-5.3", "source": "Z.ai", "name": "GLM-5.3"},
+    {"id": "z-ai/glm-5.3-flash", "source": "Z.ai", "name": "GLM-5.3 Flash"},
+    {"id": "z-ai/glm-5.2", "source": "Z.ai", "name": "GLM-5.2"},
+    {"id": "moonshotai/kimi-k3", "source": "Moonshot AI", "name": "Kimi K3"},
+    {"id": "moonshotai/kimi-k2.6", "source": "Moonshot AI", "name": "Kimi K2.6"},
+    {"id": "minimaxai/minimax-m3", "source": "MiniMax", "name": "MiniMax M3"},
+    {"id": "nvidia/nemotron-3.5-lightning-30b-a3b", "source": "NVIDIA", "name": "Nemotron 3.5 Lightning 30B A3B"},
+    {"id": "nvidia/nemotron-3-ultra-550b-a55b", "source": "NVIDIA", "name": "Nemotron 3 Ultra 550B A55B"},
+    {"id": "nvidia/nemotron-3-super-120b-a12b", "source": "NVIDIA", "name": "Nemotron 3 Super 120B A12B"},
+    {"id": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning", "source": "NVIDIA", "name": "Nemotron 3 Nano Omni 30B A3B Reasoning"},
+    {"id": "meta/muse-glimmer-30b", "source": "Meta", "name": "Muse Glimmer 30B"},
+    {"id": "meta/llama-3.3-70b-instruct", "source": "Meta", "name": "Llama 3.3 70B Instruct"},
+    {"id": "meta/llama-3.2-11b-vision-instruct", "source": "Meta", "name": "Llama 3.2 11B Vision Instruct"},
+    {"id": "meta/llama-3.2-90b-vision-instruct", "source": "Meta", "name": "Llama 3.2 90B Vision Instruct"},
+    {"id": "openai/gpt-oss-20b", "source": "OpenAI", "name": "GPT-OSS 20B"},
+    {"id": "openai/gpt-oss-120b", "source": "OpenAI", "name": "GPT-OSS 120B"},
+    {"id": "google/gemma-4-31b-it", "source": "Google", "name": "Gemma 4 31B IT"},
+    {"id": "qwen/qwen3-next-80b-a3b-instruct", "source": "Qwen", "name": "Qwen3-Next 80B A3B Instruct"},
+    {"id": "qwen/qwen2.5-coder-32b-instruct", "source": "Qwen", "name": "Qwen2.5 Coder 32B Instruct"},
+    {"id": "poolside/laguna-xs-2.1", "source": "Poolside", "name": "Laguna XS 2.1"},
+    {"id": "mistralai/mistral-large-3-675b-instruct-2512", "source": "Mistral AI", "name": "Mistral Large 3 675B"},
+    {"id": "stepfun-ai/step-3.7-flash", "source": "StepFun", "name": "Step 3.7 Flash"},
 ]
-NVIDIA_CODE_MODEL_IDS = {m["id"] for m in NVIDIA_FREE_CHAT_MODELS if m["code"]}
+
+# Entries in NVIDIA's model index that are not text-chat models (embeddings, rerankers, safety classifiers,
+# image/video/bio/driving models, parsers, speech...). They are hidden from the chat list.
+NVIDIA_NON_CHAT = re.compile(
+    r"embed|rerank|retriev|guard|safety|topic-control|jailbreak|gliner|pii|parse|clip|dino|detect|"
+    r"flux|stable-|sdxl|cosmos|trellis|bevformer|sparsedrive|streampetr|alphafold|boltz|diffdock|genmol|"
+    r"molmim|evo2|openfold|proteinmpnn|rfdiffusion|vista3d|corrdiff|fourcastnet|cuopt|kumo|fuyu|paligemma|"
+    r"neva|changenet|retail-object|nemoretriever|fugatto|magpie|maxine|ising|msa-search|bge-m3|"
+    r"arctic-embed|diffusiongemma|colabfold|riva-translate|hive/|whisper|parakeet|canary",
+    re.I,
+)
+
+# Best coding models on NVIDIA's hosted API, strongest first (based on published SWE-bench / Terminal-bench
+# results and NVIDIA's model guidance, Oct 2026). Code Studio shows the ones NVIDIA currently hosts.
+NVIDIA_CODE_RANKING = [
+    ("z-ai/glm-5.3", "GLM-5.3"),
+    ("moonshotai/kimi-k3", "Kimi K3"),
+    ("deepseek-ai/deepseek-v4-pro", "DeepSeek V4 Pro"),
+    ("deepseek-ai/deepseek-v4-flash", "DeepSeek V4 Flash"),
+    ("z-ai/glm-5.2", "GLM-5.2"),
+    ("minimaxai/minimax-m3", "MiniMax M3"),
+    ("nvidia/nemotron-3-ultra-550b-a55b", "Nemotron 3 Ultra 550B"),
+    ("nvidia/nemotron-3-super-120b-a12b", "Nemotron 3 Super 120B"),
+    ("moonshotai/kimi-k2.6", "Kimi K2.6"),
+    ("qwen/qwen3-next-80b-a3b-instruct", "Qwen3-Next 80B"),
+    ("qwen/qwen2.5-coder-32b-instruct", "Qwen2.5 Coder 32B"),
+    ("poolside/laguna-xs-2.1", "Poolside Laguna XS 2.1"),
+    ("mistralai/mistral-large-3-675b-instruct-2512", "Mistral Large 3"),
+    ("openai/gpt-oss-120b", "GPT-OSS 120B"),
+    ("stepfun-ai/step-3.7-flash", "Step 3.7 Flash"),
+    ("google/codegemma-7b", "CodeGemma 7B"),
+]
 
 
 def xkiro_catalog():
@@ -207,30 +244,54 @@ def xkiro_catalog():
     return _xkiro_cache["models"]  # stale copy (or empty) if xKiro was unreachable
 
 
+def _nvidia_entry(model_id, known):
+    """A catalog entry with a "Source: Name" label (the UI splits the label at ': ')."""
+    if model_id in known:
+        item = known[model_id]
+        return {"id": model_id, "source": item["source"], "name": item["name"], "label": f'{item["source"]}: {item["name"]}'}
+    owner, _, name = model_id.partition("/")
+    if not name:
+        owner, name = "NVIDIA", model_id
+    return {"id": model_id, "source": owner, "name": name, "label": f"{owner}: {name}"}
+
+
 def nvidia_catalog():
-    """Expose the current curated set of NVIDIA free chat endpoints in a source-qualified format."""
+    """Every chat-capable model on NVIDIA's hosted API (live from /v1/models), cached for 5 minutes.
+    Falls back to a built-in list if NVIDIA's index cannot be reached."""
     now = time.time()
     if _nvidia_cache["models"] and now - _nvidia_cache["at"] < 300:
         return _nvidia_cache["models"]
-    models = [dict(item, label=f'{item["source"]}: {item["name"]}') for item in NVIDIA_FREE_CHAT_MODELS]
+    known = {m["id"]: m for m in NVIDIA_FREE_CHAT_MODELS}
+    models = None
     key = clean_key(os.getenv("NVIDIA_API_KEY", ""))
     if key:
-        # Intersect against NVIDIA's live OpenAI-compatible model index when possible.
-        # If NVIDIA's index doesn't return IDs in the same form, retain the curated free list.
         try:
             r = httpx.get(f"{NVIDIA_BASE_URL}/models", headers={"Authorization": f"Bearer {key}"}, timeout=10)
             if r.status_code == 200:
-                payload = r.json()
-                ids = {x.get("id") for x in payload.get("data", []) if isinstance(x, dict)}
-                ids |= {x.replace("-", ".") for x in list(ids) if isinstance(x, str)}
-                live = [m for m in models if m["id"] in ids]
-                # Do not let a partial model-index response silently hide most of the free list.
-                if len(live) >= max(5, int(len(models) * 0.6)):
-                    models = live
-        except (httpx.HTTPError, ValueError, AttributeError):
+                ids = [x["id"] for x in r.json().get("data", []) if isinstance(x, dict) and isinstance(x.get("id"), str)]
+                chat_ids = sorted({i for i in ids if not NVIDIA_NON_CHAT.search(i)}, key=str.lower)
+                if chat_ids:
+                    models = [_nvidia_entry(i, known) for i in chat_ids]
+        except (httpx.HTTPError, ValueError, AttributeError, KeyError):
             pass
+    if models is None:
+        models = [_nvidia_entry(m["id"], known) for m in NVIDIA_FREE_CHAT_MODELS]
     _nvidia_cache.update(at=now, models=models)
     return models
+
+
+def nvidia_code_models():
+    """The best coding models NVIDIA currently hosts, strongest first. Labels carry a rank prefix so they stay in order."""
+    norm = lambda s: re.sub(r"[^a-z0-9]", "", str(s).lower())
+    by_norm = {norm(m["id"]): m["id"] for m in nvidia_catalog()}
+    out = []
+    for rank, (model_id, label) in enumerate(NVIDIA_CODE_RANKING, 1):
+        real = by_norm.get(norm(model_id))
+        if real:
+            out.append({"id": real, "source": "NVIDIA NIM", "name": label, "label": f"{rank:02d} · {label}", "rank": rank})
+    if not out:  # catalog unavailable or empty: still offer the ranked list
+        out = [{"id": mid, "source": "NVIDIA NIM", "name": label, "label": f"{rank:02d} · {label}", "rank": rank} for rank, (mid, label) in enumerate(NVIDIA_CODE_RANKING, 1)]
+    return out
 
 
 def resolve_model(provider, requested=None):
@@ -294,6 +355,15 @@ def provider_error_message(provider, status, model_name):
             return "xKiro's free allowance looks used up for today."
         if status in {400, 403, 404}:
             return f"xKiro would not run '{model_name}' (HTTP {status}). The model may be unavailable right now."
+    if provider == "nvidia":
+        if status == 401:
+            return "NVIDIA rejected the API key. Check NVIDIA_API_KEY in Render."
+        if status == 402:
+            return "NVIDIA's free allowance for this key looks used up."
+        if status == 403:
+            return f"NVIDIA did not allow this key to use '{model_name}'. Try another model."
+        if status in {400, 404}:
+            return f"NVIDIA would not run '{model_name}' (HTTP {status}). The model may be unavailable right now."
     return "The selected AI provider returned an error."
 
 
@@ -823,6 +893,8 @@ def ai_start_prompt(provider, mode, model_name=None, instructions=None):
         prompt += " You are running through OpenRouter. The selected OpenRouter model may be routed dynamically, so do not invent a specific underlying model unless the API response identifies it."
     elif provider == "xkiro":
         prompt += " You are running through xKiro's OpenAI-compatible gateway, which routes to many different models. Your model is the one named above; do not claim to be a different model."
+    elif provider == "nvidia":
+        prompt += " You are running through NVIDIA's hosted API (build.nvidia.com). Your model is the one named above; do not claim to be a different model."
     if mode == "code":
         prompt += " You are in Write Code mode. Produce production-quality code, think through edge cases, include tests when useful, and clearly separate code from explanation."
     if mode == "deep-think":
@@ -867,7 +939,9 @@ def ask_model(provider, prompt, context, mode, history=None, requested_model=Non
     if provider == "groq" and mode == "deep-think":
         payload["reasoning_effort"] = "high"
     try:
-        r = httpx.post(cfg["url"], headers=headers, json=payload, timeout=90)
+        r = httpx.post(cfg["url"], headers=headers, json=payload, timeout=120 if (provider == "nvidia" and mode == "code") else 90)
+    except httpx.TimeoutException as exc:
+        raise HTTPException(504 if provider == "nvidia" else 502, "The AI took too long to answer. Try a faster model." if provider == "nvidia" else "AI request failed.") from exc
     except httpx.HTTPError as exc:
         raise HTTPException(502, "AI request failed.") from exc
     if r.status_code == 429:
@@ -876,6 +950,9 @@ def ask_model(provider, prompt, context, mode, history=None, requested_model=Non
         # 401 -> 503 and 402 -> 429 so the normal fallback to other providers kicks in.
         status = {401: 503, 402: 429, 403: 403}.get(r.status_code, 400)
         raise HTTPException(status, provider_error_message(provider, r.status_code, model_name))
+    if provider == "nvidia" and r.status_code in {400, 401, 402, 403, 404}:
+        status = {401: 503, 402: 429, 403: 403, 404: 404}.get(r.status_code, 400)
+        raise HTTPException(status, provider_error_message(provider, r.status_code, model_name))
     if r.status_code != 200:
         raise HTTPException(502, "The selected AI provider returned an error.")
     try:
@@ -883,8 +960,10 @@ def ask_model(provider, prompt, context, mode, history=None, requested_model=Non
         text = message.get("content") or ""
     except (KeyError, IndexError, TypeError, ValueError) as exc:
         raise HTTPException(502, "The model returned an unexpected response.") from exc
+    if provider == "nvidia":
+        text = re.sub(r"<think>.*?</think>", "", text, flags=re.S).strip()
     if not text.strip():
-        raise HTTPException(502, "The model returned an empty response.")
+        raise HTTPException(502, "The model returned an empty response." if provider != "nvidia" else "The model returned an empty response (it may have used its whole token budget thinking). Try a faster model.")
     return text, model_name
 
 
@@ -1096,7 +1175,7 @@ def config():
             "configured": nvidia_key_configured,
             "access_tier": "free",
         })
-    code_models = [dict(m, configured=nvidia_key_configured) for m in nvidia_models if m["id"] in NVIDIA_CODE_MODEL_IDS]
+    code_models = [dict(m, configured=nvidia_key_configured) for m in nvidia_code_models()]
     return {
         "models": chat_models,
         "code_models": code_models,
@@ -1589,13 +1668,13 @@ def add_file_context(uid, file_path, context):
 
 @app.post("/api/code")
 def generate_code(body: CodeRequest, response: Response, render_ai_user: str | None = Cookie(default=None, alias=USER_COOKIE)):
-    """Dedicated NVIDIA coding workbench using free coding-capable endpoints."""
+    """Dedicated NVIDIA coding workbench using the best coding models NVIDIA hosts."""
     if not clean_key(os.getenv("NVIDIA_API_KEY", "")):
         raise HTTPException(503, "NVIDIA coding is not configured. Add NVIDIA_API_KEY in the Render environment settings.")
     uid = identify(response, render_ai_user)
     requested = body.model.strip()
-    if requested not in NVIDIA_CODE_MODEL_IDS:
-        raise HTTPException(400, "Choose a supported free coding model from Code Studio.")
+    if requested not in {m["id"] for m in nvidia_code_models()}:
+        raise HTTPException(400, "Choose a supported coding model from Code Studio.")
     check_quota(uid, "nvidia")
     instructions = (
         "You are the senior software engineer in NLGEP Code Studio. Produce correct, runnable code rather than vague pseudocode. "
