@@ -1,4 +1,5 @@
 import calendar
+import base64
 import hashlib
 import re
 import hmac
@@ -39,8 +40,11 @@ def env_int(name, default):
 
 XKIRO_BASE_URL = (os.getenv("XKIRO_BASE_URL", "").strip() or "https://api.xkiro.com/v1").rstrip("/")
 XKIRO_FREE_IMAGE_FALLBACK = "sensenova/sensenova-u1.5-lite"  # xKiro's documented free-tier image model
+NVIDIA_BASE_URL = (os.getenv("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1").strip() or "https://integrate.api.nvidia.com/v1").rstrip("/")
+NVIDIA_IMAGE_MODEL = (os.getenv("NVIDIA_IMAGE_MODEL", "black-forest-labs/flux.2-klein-4b").strip() or "black-forest-labs/flux.2-klein-4b")
+NVIDIA_IMAGE_URL = "https://ai.api.nvidia.com/v1/genai/" + NVIDIA_IMAGE_MODEL
 IMAGE_DEFAULT_PROVIDER = os.getenv("IMAGE_DEFAULT_PROVIDER", "cloudflare").strip().lower()
-if IMAGE_DEFAULT_PROVIDER not in {"cloudflare", "xkiro"}:
+if IMAGE_DEFAULT_PROVIDER not in {"cloudflare", "xkiro", "nvidia"}:
     IMAGE_DEFAULT_PROVIDER = "cloudflare"
 MODELS = {
     "groq": {"label": "OpenAI GPT-OSS 120B via Groq", "model": os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"), "url": "https://api.groq.com/openai/v1/chat/completions", "key": "GROQ_API_KEY"},
@@ -49,6 +53,7 @@ MODELS = {
     # xKiro is a multi-model gateway. Only its FREE models are offered. "model" is the optional
     # default (XKIRO_MODEL); the person can pick any free model from xKiro's live catalog in the UI.
     "xkiro": {"label": "xKiro: free models", "model": os.getenv("XKIRO_MODEL", "").strip(), "url": f"{XKIRO_BASE_URL}/chat/completions", "key": "XKIRO_API_KEY"},
+    "nvidia": {"label": "NVIDIA NIM", "model": "deepseek-ai/deepseek-v4.1-flash", "url": f"{NVIDIA_BASE_URL}/chat/completions", "key": "NVIDIA_API_KEY"},
 }
 
 # Friendly names + groupings used by the usage dashboard.
@@ -57,6 +62,8 @@ PROVIDER_META = {
     "gemini": ("Google Gemini", "chat"),
     "openrouter": ("OpenRouter", "chat"),
     "xkiro": ("xKiro · free chat models", "chat"),
+    "nvidia": ("NVIDIA NIM · free chat models", "chat"),
+    "nvidia_image": ("NVIDIA FLUX.2 Klein 4B", "image"),
     "tavily": ("Tavily · fast search", "search"),
     "exa": ("Exa · deep search", "search"),
     "cloudflare": ("Cloudflare · FLUX images", "image"),
@@ -105,9 +112,15 @@ class AskRequest(BaseModel):
 
 
 class ImageRequest(BaseModel):
-    prompt: str = Field(min_length=1, max_length=2048)
-    image_provider: str = Field(default="cloudflare", pattern="^(cloudflare|xkiro)$")
-    image_model: str | None = Field(default=None, max_length=120)
+    prompt: str = Field(min_length=1, max_length=10000)
+    image_provider: str = Field(default="cloudflare", pattern="^(cloudflare|xkiro|nvidia)$")
+    image_model: str | None = Field(default=None, max_length=160)
+
+
+class CodeRequest(BaseModel):
+    prompt: str = Field(min_length=1, max_length=12000)
+    model: str = Field(min_length=1, max_length=160)
+    instructions: str | None = Field(default=None, max_length=500)
 
 
 class ChatLoginRequest(BaseModel):
@@ -137,6 +150,29 @@ class FileDeleteRequest(BaseModel):
 _xkiro_cache = {"at": 0.0, "models": []}
 _xkiro_image_cache = {"at": 0.0, "models": []}
 _xkiro_usage_cache = {"at": 0.0, "data": None}
+_nvidia_cache = {"at": 0.0, "models": []}
+
+# NVIDIA Build free inference endpoints that support chat/text generation.
+# Non-chat services (embeddings, classifiers, TTS/ASR, tabular and video-only models) are excluded.
+NVIDIA_FREE_CHAT_MODELS = [
+    {"id": "deepseek-ai/deepseek-v4.1-flash", "source": "DeepSeek AI", "name": "V4.1 Flash", "code": True},
+    {"id": "z-ai/glm-5.3", "source": "Z.ai", "name": "GLM-5.3", "code": True},
+    {"id": "z-ai/glm-5.3-flash", "source": "Z.ai", "name": "GLM-5.3 Flash", "code": True},
+    {"id": "moonshotai/kimi-k3", "source": "Moonshot AI", "name": "Kimi K3", "code": True},
+    {"id": "nvidia/nemotron-3.5-lightning-30b-a3b", "source": "NVIDIA", "name": "Nemotron 3.5 Lightning 30B A3B", "code": True},
+    {"id": "meta/muse-glimmer-30b", "source": "Meta", "name": "Muse Glimmer 30B", "code": False},
+    {"id": "nvidia/nemotron-3-ultra-550b-a55b", "source": "NVIDIA", "name": "Nemotron 3 Ultra 550B A55B", "code": True},
+    {"id": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning", "source": "NVIDIA", "name": "Nemotron 3 Nano Omni 30B A3B Reasoning", "code": False},
+    {"id": "nvidia/nemotron-3-super-120b-a12b", "source": "NVIDIA", "name": "Nemotron 3 Super 120B A12B", "code": True},
+    {"id": "openai/gpt-oss-20b", "source": "OpenAI", "name": "GPT-OSS 20B", "code": True},
+    {"id": "meta/llama-3.2-11b-vision-instruct", "source": "Meta", "name": "Llama 3.2 11B Vision Instruct", "code": False},
+    {"id": "meta/llama-3.2-90b-vision-instruct", "source": "Meta", "name": "Llama 3.2 90B Vision Instruct", "code": False},
+    {"id": "google/diffusiongemma-26b-a4b-it", "source": "Google", "name": "DiffusionGemma 26B A4B IT", "code": False},
+    {"id": "google/gemma-4-31b-it", "source": "Google", "name": "Gemma 4 31B IT", "code": True},
+    {"id": "poolside/laguna-xs-2.1", "source": "Poolside", "name": "Laguna XS 2.1", "code": True},
+    {"id": "mistralai/mistral-nemotron", "source": "Mistral AI", "name": "Mistral Nemotron", "code": True},
+]
+NVIDIA_CODE_MODEL_IDS = {m["id"] for m in NVIDIA_FREE_CHAT_MODELS if m["code"]}
 
 
 def xkiro_catalog():
@@ -169,9 +205,40 @@ def xkiro_catalog():
     return _xkiro_cache["models"]  # stale copy (or empty) if xKiro was unreachable
 
 
+def nvidia_catalog():
+    """Expose the current curated set of NVIDIA free chat endpoints in a source-qualified format."""
+    now = time.time()
+    if _nvidia_cache["models"] and now - _nvidia_cache["at"] < 300:
+        return _nvidia_cache["models"]
+    models = [dict(item, label=f'{item["source"]}: {item["name"]}') for item in NVIDIA_FREE_CHAT_MODELS]
+    key = clean_key(os.getenv("NVIDIA_API_KEY", ""))
+    if key:
+        # Intersect against NVIDIA's live OpenAI-compatible model index when possible.
+        # If NVIDIA's index doesn't return IDs in the same form, retain the curated free list.
+        try:
+            r = httpx.get(f"{NVIDIA_BASE_URL}/models", headers={"Authorization": f"Bearer {key}"}, timeout=10)
+            if r.status_code == 200:
+                payload = r.json()
+                ids = {x.get("id") for x in payload.get("data", []) if isinstance(x, dict)}
+                ids |= {x.replace("-", ".") for x in list(ids) if isinstance(x, str)}
+                live = [m for m in models if m["id"] in ids]
+                if live:
+                    models = live
+        except (httpx.HTTPError, ValueError, AttributeError):
+            pass
+    _nvidia_cache.update(at=now, models=models)
+    return models
+
+
 def resolve_model(provider, requested=None):
-    """Return the exact model ID to send. For xKiro, it must be a FREE model from the live catalog."""
+    """Return the exact model ID to send, validating providers with a free model catalog."""
     cfg = MODELS[provider]
+    if provider == "nvidia":
+        requested = (requested or "").strip() or cfg["model"]
+        allowed = {m["id"] for m in nvidia_catalog()}
+        if requested not in allowed:
+            raise HTTPException(400, "Pick a free NVIDIA chat model from the model list.")
+        return requested
     if provider != "xkiro":
         return cfg["model"]
     catalog = xkiro_catalog()
@@ -250,7 +317,7 @@ def verified_user_id(cookie):
     return user_id
 
 
-DEFAULT_LIMITS = {"groq": (900, 27000), "gemini": (18, 540), "openrouter": (45, 1350), "xkiro": (200, 6000), "xkiro_image": (60, 1800), "tavily": (100, 1000), "exa": (20, 600), "cloudflare": (90, 2700)}
+DEFAULT_LIMITS = {"groq": (900, 27000), "gemini": (18, 540), "openrouter": (45, 1350), "xkiro": (200, 6000), "xkiro_image": (60, 1800), "nvidia": (300, 9000), "nvidia_image": (45, 1350), "tavily": (100, 1000), "exa": (20, 600), "cloudflare": (90, 2700)}
 
 USER_DAILY_LIMITS = {
     "groq": 10,
@@ -258,6 +325,8 @@ USER_DAILY_LIMITS = {
     "openrouter": 10,
     "xkiro": 15,
     "xkiro_image": 3,
+    "nvidia": 12,
+    "nvidia_image": 3,
     "tavily": 5,
     "exa": 3,
     "cloudflare": 3,
@@ -269,6 +338,8 @@ USER_PER_MINUTE_LIMITS = {
     "openrouter": 3,
     "xkiro": 3,
     "xkiro_image": 1,
+    "nvidia": 3,
+    "nvidia_image": 1,
     "tavily": 2,
     "exa": 1,
     "cloudflare": 1,
@@ -731,7 +802,7 @@ def ai_start_prompt(provider, mode, model_name=None, instructions=None):
     cfg = MODELS[provider]
     model_name = model_name or cfg["model"]
     today, current_time, tz_name = current_ai_datetime()
-    provider_name = {"groq": "Groq", "gemini": "Google Gemini", "openrouter": "OpenRouter", "xkiro": "xKiro"}.get(provider, provider)
+    provider_name = {"groq": "Groq", "gemini": "Google Gemini", "openrouter": "OpenRouter", "xkiro": "xKiro", "nvidia": "NVIDIA NIM"}.get(provider, provider)
     prompt = (
         f"You are NLGEP AI, an AI assistant in the NLGEP/Render AI platform. "
         f"Your model is {model_name}. Your provider is {provider_name}. "
@@ -789,7 +860,7 @@ def ask_model(provider, prompt, context, mode, history=None, requested_model=Non
         if site:
             headers["HTTP-Referer"] = site
         headers["X-Title"] = os.getenv("OPENROUTER_APP_NAME", "Render AI")
-    payload = {"model": model_name, "messages": build_messages(prompt, context, mode, history or [], provider, model_name, instructions), "max_tokens": 3000}
+    payload = {"model": model_name, "messages": build_messages(prompt, context, mode, history or [], provider, model_name, instructions), "max_tokens": 6000 if mode == "code" else 3000}
     if provider == "groq" and mode == "deep-think":
         payload["reasoning_effort"] = "high"
     try:
@@ -823,16 +894,23 @@ def resolve_selected_chat_model(selection):
         if not clean_key(os.getenv("XKIRO_API_KEY", "")):
             raise HTTPException(503, "xKiro is not configured. Add XKIRO_API_KEY.")
         return "xkiro", requested
-    if selection not in MODELS or selection == "xkiro":
+    if selection.startswith("nvidia:"):
+        requested = selection.split(":", 1)[1].strip()
+        if not requested:
+            raise HTTPException(400, "Invalid NVIDIA model selection.")
+        if not clean_key(os.getenv("NVIDIA_API_KEY", "")):
+            raise HTTPException(503, "NVIDIA NIM is not configured. Add NVIDIA_API_KEY in Render.")
+        return "nvidia", requested
+    if selection not in MODELS or selection in {"xkiro", "nvidia"}:
         raise HTTPException(400, "Choose a valid AI model before sending a message.")
     return selection, None
 
 
 def ask_with_fallback(provider, prompt, context, mode, history, user_id, requested_model=None, instructions=None):
     providers = [provider]
-    if provider != "openrouter" and clean_key(os.getenv("OPENROUTER_API_KEY", "")):
+    if provider not in {"openrouter", "nvidia"} and clean_key(os.getenv("OPENROUTER_API_KEY", "")):
         providers.append("openrouter")
-    if provider != "groq" and clean_key(os.getenv("GROQ_API_KEY", "")):
+    if provider not in {"groq", "nvidia"} and clean_key(os.getenv("GROQ_API_KEY", "")):
         providers.append("groq")
     last_error = None
     for candidate in providers:
@@ -986,12 +1064,14 @@ def health():
 
 @app.get("/api/config")
 def config():
+    nvidia_key_configured = bool(clean_key(os.getenv("NVIDIA_API_KEY", "")))
     image_providers = {
         "cloudflare": bool(CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID),
         "xkiro": bool(clean_key(os.getenv("XKIRO_API_KEY", ""))),
+        "nvidia": nvidia_key_configured,
     }
     image_default = IMAGE_DEFAULT_PROVIDER if image_providers.get(IMAGE_DEFAULT_PROVIDER) else next((k for k, v in image_providers.items() if v), IMAGE_DEFAULT_PROVIDER)
-    chat_models = [{"id": k, "label": v["label"], "model": v["model"], "configured": bool(clean_key(os.getenv(v["key"], "")))} for k, v in MODELS.items() if k != "xkiro"]
+    chat_models = [{"id": k, "label": v["label"], "model": v["model"], "configured": bool(clean_key(os.getenv(v["key"], "")))} for k, v in MODELS.items() if k not in {"xkiro", "nvidia"}]
     xkiro_key_configured = bool(clean_key(os.getenv("XKIRO_API_KEY", "")))
     if xkiro_key_configured:
         for xm in xkiro_catalog():
@@ -1003,10 +1083,22 @@ def config():
                 "provider": "xkiro",
                 "access_tier": "free",
             })
+    nvidia_models = nvidia_catalog()
+    for nm in nvidia_models:
+        chat_models.append({
+            "id": "nvidia:" + nm["id"],
+            "label": nm["label"],
+            "model": nm["id"],
+            "provider": "nvidia",
+            "configured": nvidia_key_configured,
+            "access_tier": "free",
+        })
+    code_models = [dict(m, configured=nvidia_key_configured) for m in nvidia_models if m["id"] in NVIDIA_CODE_MODEL_IDS]
     return {
         "models": chat_models,
-        "features": {"fast_search": bool(TAVILY_API_KEY), "deep_search": bool(EXA_API_KEY), "code": bool(clean_key(os.getenv("GROQ_API_KEY", ""))), "deep_think": True, "image": any(image_providers.values()), "image_providers": image_providers, "image_default": image_default},
-        "image_models": {"cloudflare": CLOUDFLARE_IMAGE_MODEL},
+        "code_models": code_models,
+        "features": {"fast_search": bool(TAVILY_API_KEY), "deep_search": bool(EXA_API_KEY), "code": bool(clean_key(os.getenv("GROQ_API_KEY", ""))), "nvidia_code": nvidia_key_configured, "deep_think": True, "image": any(image_providers.values()), "image_providers": image_providers, "image_default": image_default},
+        "image_models": {"cloudflare": CLOUDFLARE_IMAGE_MODEL, "nvidia": "FLUX.2 Klein 4B"},
         "files": {"max_size": FILE_MAX_SIZE, "max_files": FILE_USER_MAX_FILES, "max_total": FILE_USER_MAX_TOTAL, "max_attach_bytes": MAX_ATTACH_BYTES, "text_exts": sorted(TEXT_FILE_EXTS)},
     }
 
@@ -1167,12 +1259,88 @@ def file_delete(body: FileDeleteRequest, response: Response, render_ai_user: str
 
 
 # ---------- images ----------
+def generate_nvidia_image(prompt, user_id):
+    """Use NVIDIA's hosted FLUX.2 Klein 4B inference endpoint."""
+    key = clean_key(os.getenv("NVIDIA_API_KEY", ""))
+    if not key:
+        raise HTTPException(503, "NVIDIA image generation is not configured. Add NVIDIA_API_KEY in Render.")
+    check_quota(user_id, "nvidia_image")
+    payload = {
+        "mode": "Image Generation",
+        "prompt": prompt,
+        "height": 1024,
+        "width": 1024,
+        "cfg_scale": 0,
+        "samples": 1,
+        "seed": 0,
+        "steps": 4,
+        "image": None,
+    }
+    try:
+        r = httpx.post(
+            NVIDIA_IMAGE_URL,
+            headers={"Authorization": f"Bearer {key}", "Accept": "application/json", "Content-Type": "application/json"},
+            json=payload,
+            timeout=120,
+        )
+    except httpx.HTTPError as exc:
+        raise HTTPException(502, "Could not reach NVIDIA image generation.") from exc
+    if r.status_code == 401:
+        raise HTTPException(503, "NVIDIA rejected the API key. Check NVIDIA_API_KEY in Render.")
+    if r.status_code == 429:
+        raise HTTPException(429, "NVIDIA's image endpoint is rate-limited. Try again shortly.")
+    if r.status_code in {400, 403, 404, 422}:
+        detail = ""
+        try:
+            body = r.json()
+            detail = str(body.get("detail") or body.get("message") or body.get("title") or "")
+        except (ValueError, AttributeError):
+            pass
+        raise HTTPException(502, f"NVIDIA image request failed (HTTP {r.status_code}). {detail[:240]}".strip())
+    if r.status_code != 200:
+        raise HTTPException(502, f"NVIDIA image generation failed (HTTP {r.status_code}).")
+    content_type = (r.headers.get("content-type") or "").split(";")[0].lower()
+    data_url = None
+    if content_type.startswith("image/"):
+        data_url = f"data:{content_type};base64," + base64.b64encode(r.content).decode("ascii")
+    else:
+        try:
+            result = r.json()
+        except ValueError as exc:
+            raise HTTPException(502, "NVIDIA returned an unrecognized image response.") from exc
+        mime = result.get("mime_type") or result.get("mimeType") or "image/png"
+        for item in (result.get("artifacts") or result.get("data") or result.get("outputs") or []):
+            if not isinstance(item, dict):
+                continue
+            candidate_url = item.get("url") or item.get("image_url")
+            if isinstance(candidate_url, str) and candidate_url.startswith(("https://", "http://", "data:image/")):
+                data_url = candidate_url
+                break
+            candidate = item.get("base64") or item.get("b64_json") or item.get("image")
+            if isinstance(candidate, str) and candidate:
+                data_url = candidate if candidate.startswith("data:image/") else f"data:{mime};base64,{candidate}"
+                break
+        if not data_url:
+            for name in ("image", "base64", "b64_json", "output"):
+                candidate = result.get(name)
+                if isinstance(candidate, str) and candidate:
+                    data_url = candidate if candidate.startswith(("https://", "http://", "data:image/")) else f"data:{mime};base64,{candidate}"
+                    break
+    if not data_url:
+        raise HTTPException(502, "NVIDIA returned no generated image data.")
+    record_usage(user_id, "nvidia_image", "image", NVIDIA_IMAGE_MODEL)
+    return {"url": data_url, "model": NVIDIA_IMAGE_MODEL}
+
+
 @app.post("/api/image")
 def image_generate(body: ImageRequest, response: Response, render_ai_user: str | None = Cookie(default=None, alias=USER_COOKIE)):
     uid = identify(response, render_ai_user)
     if body.image_provider == "xkiro":
         job = xkiro_image_create(body.prompt, uid, body.image_model)
         return {"answer": "Image queued", "status": "processing", "job_id": job["job_id"], "provider": "xkiro_image", "model": job["model"]}
+    if body.image_provider == "nvidia":
+        result = generate_nvidia_image(body.prompt, uid)
+        return {"answer": "Generated image", "status": "succeeded", "image": result["url"], "provider": "nvidia_image", "model": result["model"]}
     result = generate_cloudflare_image(body.prompt, uid)
     return {"answer": "Generated image", "status": "succeeded", "image": result["url"], "provider": "cloudflare", "model": result["model"]}
 
@@ -1416,6 +1584,29 @@ def add_file_context(uid, file_path, context):
     return f"ATTACHED FILE '{name}':\n{text}\n\n" + context
 
 
+@app.post("/api/code")
+def generate_code(body: CodeRequest, response: Response, render_ai_user: str | None = Cookie(default=None, alias=USER_COOKIE)):
+    """Dedicated NVIDIA coding workbench using free coding-capable endpoints."""
+    if not clean_key(os.getenv("NVIDIA_API_KEY", "")):
+        raise HTTPException(503, "NVIDIA coding is not configured. Add NVIDIA_API_KEY in the Render environment settings.")
+    uid = identify(response, render_ai_user)
+    requested = body.model.strip()
+    if requested not in NVIDIA_CODE_MODEL_IDS:
+        raise HTTPException(400, "Choose a supported free coding model from Code Studio.")
+    check_quota(uid, "nvidia")
+    instructions = (
+        "You are the senior software engineer in NLGEP Code Studio. Produce correct, runnable code rather than vague pseudocode. "
+        "Follow the requested language and framework; consider security, input validation, edge cases, maintainability, and tests. "
+        "For debugging, identify the likely cause then provide the complete fix. Use Markdown headings and fenced code blocks as appropriate. "
+        "Never claim you executed code or tests unless a tool actually ran them. "
+    )
+    if body.instructions:
+        instructions += "Additional user instructions: " + body.instructions.strip()[:500]
+    answer, model_name = ask_model("nvidia", body.prompt, "", "code", [], requested, instructions)
+    record_usage(uid, "nvidia", "code", model_name)
+    return {"answer": answer, "model": model_name, "provider": "NVIDIA NIM", "status": "succeeded"}
+
+
 @app.post("/api/ask")
 def ask(body: AskRequest, response: Response, render_ai_user: str | None = Cookie(default=None, alias=USER_COOKIE)):
     selected_provider, selected_model = resolve_selected_chat_model(body.model)
@@ -1429,7 +1620,7 @@ def ask(body: AskRequest, response: Response, render_ai_user: str | None = Cooki
         if item.get("role") in {"user", "assistant"} and isinstance(item.get("content"), str)
     ]
     ai_provider = "groq" if body.mode == "code" else selected_provider
-    requested_model = selected_model if ai_provider == "xkiro" else body.xkiro_model
+    requested_model = selected_model if selected_provider in {"xkiro", "nvidia"} else body.xkiro_model
     resolve_model(ai_provider, requested_model)
     search_provider = "tavily" if body.mode == "fast-search" else "exa" if body.mode == "deep-search" else None
     if search_provider:
@@ -1459,7 +1650,7 @@ def ask_stream(body: AskRequest, response: Response, render_ai_user: str | None 
         if item.get("role") in {"user", "assistant"} and isinstance(item.get("content"), str)
     ]
     ai_provider = "groq" if body.mode == "code" else selected_provider
-    requested_model = selected_model if ai_provider == "xkiro" else body.xkiro_model
+    requested_model = selected_model if selected_provider in {"xkiro", "nvidia"} else body.xkiro_model
     model_name = resolve_model(ai_provider, requested_model)
     search_provider = "tavily" if body.mode == "fast-search" else "exa" if body.mode == "deep-search" else None
     if search_provider:
