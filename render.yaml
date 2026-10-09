@@ -4,7 +4,8 @@ services:
     runtime: python
     plan: free
     buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    # asgi.py = the original app (main.py) + the NVIDIA routes (nvidia.py)
+    startCommand: uvicorn asgi:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
     envVars:
       - key: GROQ_API_KEY
@@ -17,6 +18,9 @@ services:
         sync: false
       # xKiro key: set the value in the Render dashboard (Environment tab). Never commit it.
       - key: XKIRO_API_KEY
+        sync: false
+      # NVIDIA key (build.nvidia.com, starts with nvapi-): set the value in the Render dashboard. Never commit it.
+      - key: NVIDIA_API_KEY
         sync: false
       - key: TAVILY_API_KEY
         sync: false
@@ -80,6 +84,18 @@ services:
         value: "60"
       - key: XKIRO_IMAGE_MONTHLY_LIMIT
         value: "1800"
+      - key: NVIDIA_DAILY_LIMIT
+        value: "300"
+      - key: NVIDIA_MONTHLY_LIMIT
+        value: "9000"
+      - key: NVIDIA_CODE_DAILY_LIMIT
+        value: "200"
+      - key: NVIDIA_CODE_MONTHLY_LIMIT
+        value: "6000"
+      - key: NVIDIA_IMAGE_DAILY_LIMIT
+        value: "100"
+      - key: NVIDIA_IMAGE_MONTHLY_LIMIT
+        value: "3000"
       - key: TAVILY_DAILY_LIMIT
         value: "100"
       - key: TAVILY_MONTHLY_LIMIT
@@ -124,6 +140,18 @@ services:
       - key: XKIRO_IMAGE_USER_DAILY_LIMIT
         value: "3"
       - key: XKIRO_IMAGE_USER_PER_MINUTE_LIMIT
+        value: "1"
+      - key: NVIDIA_USER_DAILY_LIMIT
+        value: "20"
+      - key: NVIDIA_USER_PER_MINUTE_LIMIT
+        value: "3"
+      - key: NVIDIA_CODE_USER_DAILY_LIMIT
+        value: "15"
+      - key: NVIDIA_CODE_USER_PER_MINUTE_LIMIT
+        value: "2"
+      - key: NVIDIA_IMAGE_USER_DAILY_LIMIT
+        value: "5"
+      - key: NVIDIA_IMAGE_USER_PER_MINUTE_LIMIT
         value: "1"
       - key: TAVILY_USER_DAILY_LIMIT
         value: "5"
