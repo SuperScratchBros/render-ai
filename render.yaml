@@ -4,7 +4,7 @@ services:
     runtime: python
     plan: free
     buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    startCommand: uvicorn runtime_patch:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
     envVars:
       - key: GROQ_API_KEY
@@ -48,10 +48,8 @@ services:
         value: black-forest-labs/flux.2-klein-4b
       - key: XKIRO_IMAGE_MODEL
         value: sensenova/sensenova-u1.5-lite
-      # Which image engine is selected by default: cloudflare or xkiro (users can switch in the UI)
       - key: IMAGE_DEFAULT_PROVIDER
         value: nvidia
-      # App-wide provider safety caps (below the current published free/API allowances)
       - key: GROQ_DAILY_LIMIT
         value: "900"
       - key: GROQ_MONTHLY_LIMIT
@@ -90,7 +88,6 @@ services:
         value: "600"
       - key: PYTHON_VERSION
         value: 3.12.3
-
       - key: CLOUDFLARE_DAILY_LIMIT
         value: "90"
       - key: CLOUDFLARE_MONTHLY_LIMIT
