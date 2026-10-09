@@ -1842,6 +1842,21 @@ if STATIC_DIR.is_dir():
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
+@app.head("/")
+def index_head():
+    """Answer lightweight HEAD health probes without returning the page body."""
+    index_file = BASE_DIR / "index.html"
+    if not index_file.is_file():
+        raise HTTPException(404, "The app homepage file is missing.")
+    return Response(
+        status_code=200,
+        headers={
+            "Content-Type": "text/html; charset=utf-8",
+            "Content-Length": str(index_file.stat().st_size),
+        },
+    )
+
+
 @app.get("/")
 def index():
     return FileResponse(BASE_DIR / "index.html")
