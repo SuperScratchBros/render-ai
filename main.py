@@ -166,13 +166,13 @@ NVIDIA_FREE_CHAT_MODELS = [
     {"id": "nvidia/ising-calibration-1.5-31b", "source": "NVIDIA", "name": "Ising Calibration 1.5 31B", "code": False},
     {"id": "nvidia/ising-calibration-1-35b-a3b", "source": "NVIDIA", "name": "Ising Calibration 1 35B A3B", "code": False},
     {"id": "nvidia/nemotron-3-super-120b-a12b", "source": "NVIDIA", "name": "Nemotron 3 Super 120B A12B", "code": True},
+    {"id": "nvidia/nemotron-voicechat", "source": "NVIDIA", "name": "Nemotron Voicechat", "code": False},
     {"id": "openai/gpt-oss-20b", "source": "OpenAI", "name": "GPT-OSS 20B", "code": True},
     {"id": "meta/llama-3.2-11b-vision-instruct", "source": "Meta", "name": "Llama 3.2 11B Vision Instruct", "code": False},
     {"id": "meta/llama-3.2-90b-vision-instruct", "source": "Meta", "name": "Llama 3.2 90B Vision Instruct", "code": False},
     {"id": "google/diffusiongemma-26b-a4b-it", "source": "Google", "name": "DiffusionGemma 26B A4B IT", "code": False},
     {"id": "google/gemma-4-31b-it", "source": "Google", "name": "Gemma 4 31B IT", "code": True},
     {"id": "poolside/laguna-xs-2.1", "source": "Poolside", "name": "Laguna XS 2.1", "code": True},
-    {"id": "mistralai/mistral-nemotron", "source": "Mistral AI", "name": "Mistral Nemotron", "code": True},
 ]
 NVIDIA_CODE_MODEL_IDS = {m["id"] for m in NVIDIA_FREE_CHAT_MODELS if m["code"]}
 
@@ -871,7 +871,31 @@ def ask_model(provider, prompt, context, mode, history=None, requested_model=Non
     except httpx.HTTPError as exc:
         raise HTTPException(502, "AI request failed.") from exc
     if r.status_code == 429:
+        detail = ""
+        if provider == "nvidia":
+            try:
+                payload_error = r.json()
+                detail = str(payload_error.get("detail") or payload_error.get("message") or payload_error.get("title") or "")
+            except (ValueError, AttributeError):
+                pass
+            raise HTTPException(429, ("NVIDIA's endpoint is rate-limited or its trial quota is exhausted. Try another model or retry later. " + detail[:220]).strip())
         raise HTTPException(429, "The selected AI provider is rate-limited right now.")
+    if provider == "nvidia":
+        try:
+            payload_error = r.json()
+            detail = str(payload_error.get("detail") or payload_error.get("message") or payload_error.get("title") or payload_error.get("error") or "")
+        except (ValueError, AttributeError):
+            detail = ""
+        if r.status_code == 401:
+            raise HTTPException(503, "NVIDIA rejected the API key. Check NVIDIA_API_KEY in Render.")
+        if r.status_code == 402:
+            raise HTTPException(429, "NVIDIA's free endpoint trial quota appears exhausted. Try a different model or retry after the quota resets.")
+        if r.status_code == 403:
+            raise HTTPException(403, ("NVIDIA denied access to this endpoint. The model may not be enabled for this key. " + detail[:220]).strip())
+        if r.status_code == 404:
+            raise HTTPException(400, f"NVIDIA model '{model_name}' is not available at the current endpoint. Select a different NVIDIA model.")
+        if r.status_code in {400, 422}:
+            raise HTTPException(502, ("NVIDIA rejected the request for model '" + model_name + "'. " + detail[:260]).strip())
     if provider == "xkiro" and r.status_code in {400, 401, 402, 403, 404}:
         # 401 -> 503 and 402 -> 429 so the normal fallback to other providers kicks in.
         status = {401: 503, 402: 429, 403: 403}.get(r.status_code, 400)
