@@ -50,7 +50,7 @@ services:
         value: sensenova/sensenova-u1.5-lite
       # Which image engine is selected by default: cloudflare or xkiro (users can switch in the UI)
       - key: IMAGE_DEFAULT_PROVIDER
-        value: cloudflare
+        value: nvidia
       # App-wide provider safety caps (below the current published free/API allowances)
       - key: GROQ_DAILY_LIMIT
         value: "900"
