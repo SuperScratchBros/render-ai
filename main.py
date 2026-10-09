@@ -1293,11 +1293,11 @@ def generate_nvidia_image(prompt, user_id):
         raise HTTPException(503, "NVIDIA image generation is not configured. Add NVIDIA_API_KEY in Render.")
     check_quota(user_id, "nvidia_image")
     payload = {
-        "mode": "Image Generation",
+        # The hosted endpoint's live validator rejects "mode" and requires cfg_scale >= 1.
         "prompt": prompt,
         "height": 1024,
         "width": 1024,
-        "cfg_scale": 0,
+        "cfg_scale": 1,
         "samples": 1,
         "seed": 0,
         "steps": 4,
