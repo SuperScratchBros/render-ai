@@ -224,7 +224,8 @@ def nvidia_catalog():
                 ids = {x.get("id") for x in payload.get("data", []) if isinstance(x, dict)}
                 ids |= {x.replace("-", ".") for x in list(ids) if isinstance(x, str)}
                 live = [m for m in models if m["id"] in ids]
-                if live:
+                # Do not let a partial model-index response silently hide most of the free list.
+                if len(live) >= max(5, int(len(models) * 0.6)):
                     models = live
         except (httpx.HTTPError, ValueError, AttributeError):
             pass
