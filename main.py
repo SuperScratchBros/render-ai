@@ -43,7 +43,7 @@ XKIRO_FREE_IMAGE_FALLBACK = "sensenova/sensenova-u1.5-lite"  # xKiro's documente
 NVIDIA_BASE_URL = (os.getenv("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1").strip() or "https://integrate.api.nvidia.com/v1").rstrip("/")
 NVIDIA_IMAGE_MODEL = (os.getenv("NVIDIA_IMAGE_MODEL", "black-forest-labs/flux.2-klein-4b").strip() or "black-forest-labs/flux.2-klein-4b")
 NVIDIA_IMAGE_URL = "https://ai.api.nvidia.com/v1/genai/" + NVIDIA_IMAGE_MODEL
-IMAGE_DEFAULT_PROVIDER = os.getenv("IMAGE_DEFAULT_PROVIDER", "cloudflare").strip().lower()
+IMAGE_DEFAULT_PROVIDER = os.getenv("IMAGE_DEFAULT_PROVIDER", "nvidia").strip().lower()
 if IMAGE_DEFAULT_PROVIDER not in {"cloudflare", "xkiro", "nvidia"}:
     IMAGE_DEFAULT_PROVIDER = "cloudflare"
 MODELS = {
@@ -163,6 +163,8 @@ NVIDIA_FREE_CHAT_MODELS = [
     {"id": "meta/muse-glimmer-30b", "source": "Meta", "name": "Muse Glimmer 30B", "code": False},
     {"id": "nvidia/nemotron-3-ultra-550b-a55b", "source": "NVIDIA", "name": "Nemotron 3 Ultra 550B A55B", "code": True},
     {"id": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning", "source": "NVIDIA", "name": "Nemotron 3 Nano Omni 30B A3B Reasoning", "code": False},
+    {"id": "nvidia/ising-calibration-1.5-31b", "source": "NVIDIA", "name": "Ising Calibration 1.5 31B", "code": False},
+    {"id": "nvidia/ising-calibration-1-35b-a3b", "source": "NVIDIA", "name": "Ising Calibration 1 35B A3B", "code": False},
     {"id": "nvidia/nemotron-3-super-120b-a12b", "source": "NVIDIA", "name": "Nemotron 3 Super 120B A12B", "code": True},
     {"id": "openai/gpt-oss-20b", "source": "OpenAI", "name": "GPT-OSS 20B", "code": True},
     {"id": "meta/llama-3.2-11b-vision-instruct", "source": "Meta", "name": "Llama 3.2 11B Vision Instruct", "code": False},
@@ -222,7 +224,8 @@ def nvidia_catalog():
                 ids = {x.get("id") for x in payload.get("data", []) if isinstance(x, dict)}
                 ids |= {x.replace("-", ".") for x in list(ids) if isinstance(x, str)}
                 live = [m for m in models if m["id"] in ids]
-                if live:
+                # Do not let a partial model-index response silently hide most of the free list.
+                if len(live) >= max(5, int(len(models) * 0.6)):
                     models = live
         except (httpx.HTTPError, ValueError, AttributeError):
             pass

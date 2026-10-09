@@ -6,11 +6,11 @@ A small AI web app (FastAPI + a single `index.html`) that runs on Render. It off
 
 | Feature | Provider(s) |
 | --- | --- |
-| Chat | Groq (`openai/gpt-oss-120b`), Google Gemini, OpenRouter (`openrouter/free`), **xKiro (free models only)** |
+| Chat | Groq, Google Gemini, OpenRouter, xKiro free models, and NVIDIA NIM free chat endpoints |
 | Fast Search | Tavily |
 | Deep Search | Exa |
-| Write Code | Groq |
-| Image generation | **Two options:** Cloudflare Workers AI (FLUX) or xKiro (free image model) |
+| Write Code | Groq in chat mode; dedicated NVIDIA Code Studio with curated free code-capable models |
+| Image generation | NVIDIA FLUX.2 Klein 4B, Cloudflare FLUX, or xKiro free image models |
 | File uploads | Supabase Storage |
 | Usage, limits and community chat | Supabase |
 
@@ -20,7 +20,9 @@ A small AI web app (FastAPI + a single `index.html`) that runs on Render. It off
 
 - **Free models only.** The app loads xKiro's public model list (`GET /v1/models`) and keeps only models whose `access_tier` is `free`. Paid/premium models are not listed and are rejected by the server even if someone sends the ID by hand.
 - **Pick the exact model.** Choose "xKiro: free models" and use the dropdown. Leaving it on Default uses the first free model (or `XKIRO_MODEL` if set). The reply shows which model actually answered.
-- **Image engine toggle.** In Generate Image mode, switch between Cloudflare FLUX and xKiro. xKiro image jobs are asynchronous, so the page shows progress and keeps checking until the image is ready (up to 5 minutes).
+- **Image engine toggle.** In Image Studio, choose NVIDIA FLUX.2 Klein 4B, Cloudflare FLUX, or xKiro. xKiro image jobs are asynchronous, so the page shows progress and keeps checking until the image is ready (up to 5 minutes).
+- **NVIDIA chat models.** The chat model list includes NVIDIA's chat-capable free endpoints, including models for reasoning, vision, and general chat.
+- **Code Studio.** A separate sidebar panel exposes NVIDIA's free code-capable models, including GLM-5.3, DeepSeek V4.1 Flash, Kimi K3, Gemma 4 31B IT, and Poolside Laguna XS 2.1. Availability and free-trial quotas are controlled by NVIDIA and can change.
 - **Fallback.** If xKiro is rate-limited or out of free allowance, chat falls back to OpenRouter or Groq when those keys are set.
 
 ## Environment variables
@@ -44,6 +46,7 @@ Set these in the Render dashboard (**Service → Environment**). Secrets use `sy
 | `GEMINI_API_KEY` | Google Gemini chat. |
 | `OPENROUTER_API_KEY` | OpenRouter chat (also used as a fallback). |
 | `XKIRO_API_KEY` | xKiro free chat models and xKiro image generation. |
+| `NVIDIA_API_KEY` | NVIDIA NIM chat models, NVIDIA Code Studio, and FLUX.2 Klein 4B image generation. Create it at [build.nvidia.com](https://build.nvidia.com/). Add the key privately in Render → Environment; never commit it. |
 | `TAVILY_API_KEY` | Fast Search. |
 | `EXA_API_KEY` | Deep Search. |
 | `CLOUDFLARE_API_TOKEN` | Cloudflare image generation (needs Workers AI access). |
@@ -60,6 +63,8 @@ Set these in the Render dashboard (**Service → Environment**). Secrets use `sy
 | `XKIRO_MODEL` | first free model | Default xKiro chat model. Must be a free model. |
 | `XKIRO_IMAGE_MODEL` | first free image model (`sensenova/sensenova-u1.5-lite`) | xKiro image model. Must be a free model. |
 | `XKIRO_BASE_URL` | `https://api.xkiro.com/v1` | xKiro API base URL. |
+| `NVIDIA_BASE_URL` | `https://integrate.api.nvidia.com/v1` | NVIDIA's OpenAI-compatible chat API. |
+| `NVIDIA_IMAGE_MODEL` | `black-forest-labs/flux.2-klein-4b` | NVIDIA hosted image-generation model. |
 | `CLOUDFLARE_IMAGE_MODEL` | `@cf/black-forest-labs/flux-2-klein-4b` | Cloudflare image model. |
 | `IMAGE_DEFAULT_PROVIDER` | `cloudflare` | Image engine selected by default: `cloudflare` or `xkiro`. If that engine isn't configured, the other one is used. |
 | `AI_TIMEZONE` | `America/New_York` | Time zone given to the AI for the current date/time. |
@@ -84,6 +89,8 @@ Every provider has four limits. The variable name is the provider prefix plus th
 | `OPENROUTER` | OpenRouter chat | 45 | 1350 | 10 | 3 |
 | `XKIRO` | xKiro free chat | 200 | 6000 | 15 | 3 |
 | `XKIRO_IMAGE` | xKiro free images | 60 | 1800 | 3 | 1 |
+| `NVIDIA` | NVIDIA NIM chat and Code Studio | 300 | 9000 | 12 | 3 |
+| `NVIDIA_IMAGE` | NVIDIA FLUX.2 Klein 4B images | 45 | 1350 | 3 | 1 |
 | `TAVILY` | Fast Search | 100 | 1000 | 5 | 2 |
 | `EXA` | Deep Search | 20 | 600 | 3 | 1 |
 | `CLOUDFLARE` | Cloudflare images | 90 | 2700 | 3 | 1 |

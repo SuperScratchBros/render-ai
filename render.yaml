@@ -14,6 +14,8 @@ services:
         sync: false
       - key: OPENROUTER_API_KEY
         sync: false
+      - key: NVIDIA_API_KEY
+        sync: false
       # xKiro key: set the value in the Render dashboard (Environment tab). Never commit it.
       - key: XKIRO_API_KEY
         sync: false
@@ -44,11 +46,15 @@ services:
         value: openrouter/free
       - key: XKIRO_BASE_URL
         value: https://api.xkiro.com/v1
+      - key: NVIDIA_BASE_URL
+        value: https://integrate.api.nvidia.com/v1
+      - key: NVIDIA_IMAGE_MODEL
+        value: black-forest-labs/flux.2-klein-4b
       - key: XKIRO_IMAGE_MODEL
         value: sensenova/sensenova-u1.5-lite
       # Which image engine is selected by default: cloudflare or xkiro (users can switch in the UI)
       - key: IMAGE_DEFAULT_PROVIDER
-        value: cloudflare
+        value: nvidia
       # App-wide provider safety caps (below the current published free/API allowances)
       - key: GROQ_DAILY_LIMIT
         value: "900"
@@ -64,6 +70,14 @@ services:
         value: "1350"
       - key: XKIRO_DAILY_LIMIT
         value: "200"
+      - key: NVIDIA_DAILY_LIMIT
+        value: "300"
+      - key: NVIDIA_MONTHLY_LIMIT
+        value: "9000"
+      - key: NVIDIA_IMAGE_DAILY_LIMIT
+        value: "45"
+      - key: NVIDIA_IMAGE_MONTHLY_LIMIT
+        value: "1350"
       - key: XKIRO_MONTHLY_LIMIT
         value: "6000"
       - key: XKIRO_IMAGE_DAILY_LIMIT
@@ -113,6 +127,14 @@ services:
         value: "3"
       - key: XKIRO_USER_DAILY_LIMIT
         value: "15"
+      - key: NVIDIA_USER_DAILY_LIMIT
+        value: "12"
+      - key: NVIDIA_USER_PER_MINUTE_LIMIT
+        value: "3"
+      - key: NVIDIA_IMAGE_USER_DAILY_LIMIT
+        value: "3"
+      - key: NVIDIA_IMAGE_USER_PER_MINUTE_LIMIT
+        value: "1"
       - key: XKIRO_USER_PER_MINUTE_LIMIT
         value: "3"
       - key: XKIRO_IMAGE_USER_DAILY_LIMIT
