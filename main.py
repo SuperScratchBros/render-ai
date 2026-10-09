@@ -43,7 +43,7 @@ XKIRO_FREE_IMAGE_FALLBACK = "sensenova/sensenova-u1.5-lite"  # xKiro's documente
 NVIDIA_BASE_URL = (os.getenv("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1").strip() or "https://integrate.api.nvidia.com/v1").rstrip("/")
 NVIDIA_IMAGE_MODEL = (os.getenv("NVIDIA_IMAGE_MODEL", "black-forest-labs/flux.2-klein-4b").strip() or "black-forest-labs/flux.2-klein-4b")
 NVIDIA_IMAGE_URL = "https://ai.api.nvidia.com/v1/genai/" + NVIDIA_IMAGE_MODEL
-IMAGE_DEFAULT_PROVIDER = os.getenv("IMAGE_DEFAULT_PROVIDER", "cloudflare").strip().lower()
+IMAGE_DEFAULT_PROVIDER = os.getenv("IMAGE_DEFAULT_PROVIDER", "nvidia").strip().lower()
 if IMAGE_DEFAULT_PROVIDER not in {"cloudflare", "xkiro", "nvidia"}:
     IMAGE_DEFAULT_PROVIDER = "cloudflare"
 MODELS = {
