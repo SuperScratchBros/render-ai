@@ -121,6 +121,9 @@ class ChatMessageRequest(BaseModel):
 class AIChatHistoryRequest(BaseModel):
     messages: list[dict] = Field(default_factory=list, max_length=5)
 
+class AIChatRenameRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=64)
+
 
 class FileReadRequest(BaseModel):
     path: str = Field(min_length=1, max_length=300)
@@ -1360,6 +1363,42 @@ def ai_chat_get(chat_id: str, response: Response, render_ai_user: str | None = C
     uid = identify(response, render_ai_user)
     chat, messages = read_ai_chat_history(uid, chat_id)
     return {"chat": chat, "messages": messages}
+
+
+@app.patch("/api/ai/chats/{chat_id}")
+def ai_chat_rename(chat_id: str, body: AIChatRenameRequest, response: Response, render_ai_user: str | None = Cookie(default=None, alias=USER_COOKIE)):
+    uid = identify(response, render_ai_user)
+    chat = get_ai_chat(uid, chat_id)  # verifies ownership before updating
+    title = re.sub(r"\s+", " ", body.title).strip()
+    if not title:
+        raise HTTPException(400, "Conversation name cannot be empty.")
+    if len(title) > AI_CHAT_TITLE_LIMIT:
+        raise HTTPException(400, f"Conversation names must be {AI_CHAT_TITLE_LIMIT} characters or fewer.")
+    now = datetime.now(timezone.utc).isoformat()
+    r = supabase_request(
+        "PATCH",
+        f"render_ai_chats?chat_id=eq.{validate_ai_chat_id(chat_id)}&user_id=eq.{uid}",
+        json={"title": title, "updated_at": now},
+        prefer="return=representation",
+    )
+    if r.status_code >= 300:
+        raise HTTPException(503, f"Could not rename your saved chat. {supabase_error_detail(r)}")
+    rows = r.json()
+    return {"chat": rows[0] if rows else {**chat, "title": title, "updated_at": now}}
+
+
+@app.delete("/api/ai/chats/{chat_id}")
+def ai_chat_delete(chat_id: str, response: Response, render_ai_user: str | None = Cookie(default=None, alias=USER_COOKIE)):
+    uid = identify(response, render_ai_user)
+    get_ai_chat(uid, chat_id)  # confirms this chat exists and belongs to this user
+    r = supabase_request(
+        "DELETE",
+        f"render_ai_chats?chat_id=eq.{validate_ai_chat_id(chat_id)}&user_id=eq.{uid}",
+        prefer="return=minimal",
+    )
+    if r.status_code >= 300:
+        raise HTTPException(503, f"Could not delete your saved chat. {supabase_error_detail(r)}")
+    return {"ok": True}
 
 
 @app.post("/api/ai/chats/{chat_id}/history")
