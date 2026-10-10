@@ -4,12 +4,36 @@ This module is the Render entrypoint so provider-specific fixes can be isolated
 from the main application while upstream APIs change.
 """
 import base64
+import os
 import time
 
 import httpx
 from fastapi import HTTPException
 
 import main
+
+
+def install_kiosapi():
+    """Add Kiosapi's OpenAI-compatible gateway without exposing its key to the browser."""
+    key = main.clean_key(os.getenv("KIOSAPI_API_KEY", ""))
+    model = (os.getenv("KIOSAPI_MODEL", "deepseek/deepseek-v4-flash").strip() or "deepseek/deepseek-v4-flash")
+    base_url = (os.getenv("KIOSAPI_BASE_URL", "https://api.kiosapi.id/v1").strip() or "https://api.kiosapi.id/v1").rstrip("/")
+
+    main.MODELS["kiosapi"] = {
+        "label": "KiosAPI: " + model,
+        "model": model,
+        "url": f"{base_url}/chat/completions",
+        "key": "KIOSAPI_API_KEY",
+    }
+    main.PROVIDER_META["kiosapi"] = ("KiosAPI", "chat")
+    # Keep Kiosapi inside the same fair-use accounting system as the other chat gateways.
+    main.DEFAULT_LIMITS["kiosapi"] = (200, 6000)
+    main.USER_DAILY_LIMITS["kiosapi"] = 15
+    main.USER_PER_MINUTE_LIMITS["kiosapi"] = 3
+
+    # Make the live /api/config response reflect whether the secret is present.
+    # MODELS is intentionally mutated server-side; the actual API key is never returned.
+    main.MODELS["kiosapi"]["configured"] = bool(key)
 
 
 def generate_nvidia_image(prompt, user_id):
@@ -87,6 +111,8 @@ def generate_nvidia_image(prompt, user_id):
 
     raise HTTPException(502, last_detail)
 
+
+install_kiosapi()
 
 # /api/image resolves generate_nvidia_image from main.py's module globals at request time.
 main.generate_nvidia_image = generate_nvidia_image
