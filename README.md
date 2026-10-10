@@ -6,13 +6,17 @@ A small AI web app (FastAPI + a single `index.html`) that runs on Render. It off
 
 | Feature | Provider(s) |
 | --- | --- |
-| Chat | Groq, Google Gemini, OpenRouter, xKiro free models, and NVIDIA NIM free chat endpoints |
+| Chat | Groq, Google Gemini, OpenRouter, xKiro free models, NVIDIA NIM free chat endpoints, and KiosAPI chat models |
 | Fast Search | Tavily |
 | Deep Search | Exa |
 | Write Code | Groq in chat mode; dedicated NVIDIA Code Studio with curated free code-capable models |
 | Image generation | NVIDIA FLUX.2 Klein 4B, Cloudflare FLUX, or xKiro free image models |
 | File uploads | Supabase Storage |
 | Usage, limits and community chat | Supabase |
+
+### KiosAPI
+
+[KiosAPI](https://kiosapi.id/docs) is an OpenAI-compatible API gateway. With `KIOSAPI_API_KEY` set in Render, the app fetches the live `/v1/models` catalog and lists its chat-capable text models in the main model picker. Model IDs stay namespaced as `kiosapi:<provider/model>` internally, and the API key is only used by the server. Embedding, ranking, image, video, audio, and other non-chat endpoints are excluded from the chat picker. KiosAPI pricing and account access still apply to each selected model.
 
 ### xKiro
 
