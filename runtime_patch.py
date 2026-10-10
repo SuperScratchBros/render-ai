@@ -70,7 +70,8 @@ def kiosapi_is_chat_model(item):
         "embedding", "rerank", "ranker", "-ocr", "/ocr", "document-ai",
         "native/", "gpt-image", "/imagen-", "imagen-3", "nano-banana",
         "imagine-image", "wan-2.7-image", "image-01", "glm-image",
-        "/veo-", "video", "seedance", "lyria", "music-", "/tts",
+        "/veo-", "video", "-t2v", "-i2v", "seedance", "hailuo", "/h3",
+        "lyria", "music-", "/tts",
         "speech-", "-tts", "-stt", "-asr", "transcribe", "whisper",
     )
     return not any(marker in model_id for marker in non_chat_markers)
