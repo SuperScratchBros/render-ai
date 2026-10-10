@@ -55,32 +55,32 @@ function modelDetails(m){
 function modelFamilyCandidate(x){
  const m=x.m,id=String(m.model||m.id||'').replace(/^(kiosapi|xkiro|nvidia):/i,'').toLowerCase();
  const text=(id+' '+x.name+' '+String(m.label||'')).toLowerCase();
- if(m.id==='openrouter'||m.provider==='openrouter'||/openrouter\\/free/.test(id))return 'Miscellaneous';
+ if(m.id==='openrouter'||m.provider==='openrouter'||/openrouter\/free/.test(id))return 'Miscellaneous';
  if(/claude|anthropic/.test(text))return 'Claude';
  if(/gemini/.test(text))return 'Gemini';
  if(/qwen|qwq|qvq/.test(text))return 'Qwen';
  if(/deepseek/.test(text))return 'DeepSeek';
  if(/mistral|mixtral|codestral|devstral|magistral|ministral/.test(text))return 'Mistral';
  if(/llama|meta-llama/.test(text))return 'Meta Llama';
- if(/gpt[-_/]|chatgpt|openai\\//.test(id+' '+text))return 'ChatGPT / OpenAI';
+ if(/gpt[-_/]|chatgpt|openai\//.test(id+' '+text))return 'ChatGPT / OpenAI';
  if(/nemotron/.test(text))return 'NVIDIA Nemotron';
- if(/\\bglm[-_/ ]|z-ai\\//.test(text))return 'Z.ai GLM';
+ if(/\bglm[-_/ ]|z-ai\//.test(text))return 'Z.ai GLM';
  if(/kimi|moonshot/.test(text))return 'Moonshot Kimi';
  if(/grok/.test(text))return 'xAI Grok';
  if(/command[-_/ ]|cohere/.test(text))return 'Cohere Command';
- if(/phi[-_/ ]?\\d|microsoft\\/phi/.test(text))return 'Microsoft Phi';
- if(/amazon\\/nova|\\bnova[-_/ ]/.test(text))return 'Amazon Nova';
- if(/granite|ibm\\//.test(text))return 'IBM Granite';
+ if(/phi[-_/ ]?\d|microsoft\/phi/.test(text))return 'Microsoft Phi';
+ if(/amazon\/nova|\bnova[-_/ ]/.test(text))return 'Amazon Nova';
+ if(/granite|ibm\//.test(text))return 'IBM Granite';
  if(/diffusiongemma/.test(text))return 'Miscellaneous';
  if(/gemma/.test(text))return 'Google Gemma';
  if(/poolside|laguna/.test(text))return 'Poolside Laguna';
  if(/minimax|abab[-_/]/.test(text))return 'MiniMax';
- if(/hunyuan|tencent\\//.test(text))return 'Tencent Hunyuan';
- if(/01-ai|\\byi[-_/ ]/.test(text))return '01.AI Yi';
+ if(/hunyuan|tencent\//.test(text))return 'Tencent Hunyuan';
+ if(/01-ai|\byi[-_/ ]/.test(text))return '01.AI Yi';
  if(/internlm/.test(text))return 'InternLM';
- if(/stepfun|step[-_/ ]\\d/.test(text))return 'StepFun';
- if(/falcon|tii\\//.test(text))return 'TII Falcon';
- if(/jamba|ai21\\//.test(text))return 'AI21 Jamba';
+ if(/stepfun|step[-_/ ]\d/.test(text))return 'StepFun';
+ if(/falcon|tii\//.test(text))return 'TII Falcon';
+ if(/jamba|ai21\//.test(text))return 'AI21 Jamba';
  if(/muse-glimmer/.test(text))return 'Meta Muse';
  return 'Miscellaneous';
 }
@@ -115,7 +115,7 @@ const modelFamilyDescriptions={
 };
 function modelFamilyMark(name){
  const marks={'ChatGPT / OpenAI':'GPT','Gemini':'G','Claude':'C','Qwen':'Q','DeepSeek':'DS','Mistral':'M','Meta Llama':'L','Miscellaneous':'•••','NVIDIA Nemotron':'N','Z.ai GLM':'GLM','Moonshot Kimi':'K','xAI Grok':'X','Cohere Command':'CMD','Microsoft Phi':'Φ','Amazon Nova':'A','IBM Granite':'IBM','Google Gemma':'Ge','Poolside Laguna':'P','MiniMax':'MM','Tencent Hunyuan':'T','01.AI Yi':'Yi','InternLM':'IL','StepFun':'S','TII Falcon':'F','AI21 Jamba':'J','Meta Muse':'Mu'};
- return marks[name]||String(name).split(/\\s+/).map(p=>p[0]).join('').slice(0,3).toUpperCase();
+ return marks[name]||String(name).split(/\s+/).map(p=>p[0]).join('').slice(0,3).toUpperCase();
 }
 function assignModelFamilies(items){
  const counts={};
@@ -131,34 +131,34 @@ function familyOrder(a,b){
 }
 function modelVersionParts(x){
  let s=(String(x.m.model||x.m.id||'')+' '+x.name).toLowerCase();
- s=s.replace(/\\b\\d+(?:\\.\\d+)?\\s*(?:b|m|k)\\b/g,' ');
+ s=s.replace(/\b\d+(?:\.\d+)?\s*(?:b|m|k)\b/g,' ');
  const patterns=[
-  /(?:claude|gpt|gemini|qwen|mistral|mixtral|llama|deepseek|glm|phi|gemma|nemotron|kimi|grok)[-_ ]?v?(\\d{1,2})(?:[._-](\\d{1,2}))?/i,
-  /\\bv(\\d{1,2})(?:[._-](\\d{1,2}))?/i,
-  /(?:^|[-_ ])(\\d{1,2})[._-](\\d{1,2})(?=[-_ ]|$)/i
+  /(?:claude|gpt|gemini|qwen|mistral|mixtral|llama|deepseek|glm|phi|gemma|nemotron|kimi|grok)[-_ ]?v?(\d{1,2})(?:[._-](\d{1,2}))?/i,
+  /\bv(\d{1,2})(?:[._-](\d{1,2}))?/i,
+  /(?:^|[-_ ])(\d{1,2})[._-](\d{1,2})(?=[-_ ]|$)/i
  ];
  for(const re of patterns){const hit=s.match(re);if(hit)return [Number(hit[1]||0),Number(hit[2]||0)]}
  return [0,0];
 }
 function modelQualityTier(x,family){
  const s=(x.name+' '+String(x.m.model||'')+' '+String(x.m.label||'')).toLowerCase();
- if(family==='Claude')return /\\bopus\\b/.test(s)?60:/\\bsonnet\\b/.test(s)?50:/\\bhaiku\\b/.test(s)?20:35;
- if(family==='Gemini')return /\\bpro\\b|\\bultra\\b/.test(s)?60:/flash[-_. ]?lite|flashlite/.test(s)?10:/\\bflash\\b/.test(s)?35:45;
- if(family==='ChatGPT / OpenAI')return /\\bpro\\b/.test(s)?60:/\\bnano\\b/.test(s)?10:/\\bmini\\b/.test(s)?20:/\\bturbo\\b/.test(s)?30:/\\bo[1-9](?:[-_. ]|$)|reasoning|think/.test(s)?50:40;
- if(family==='Qwen')return /\\bmax\\b/.test(s)?60:/\\bplus\\b/.test(s)?55:/\\bcoder\\b/.test(s)?48:/\\bturbo\\b/.test(s)?40:/\\bflash\\b/.test(s)?32:/\\bmini\\b|\\bsmall\\b|0[._-]?5b/.test(s)?15:38;
- if(family==='DeepSeek')return /\\bpro\\b/.test(s)?60:/\\br1\\b|reasoner/.test(s)?52:/\\bmini\\b|distill/.test(s)?20:/deepseek[-_ ]?v?4(?:[._-]|\\b)/.test(s)?48:/deepseek[-_ ]?v?3(?:[._-]|\\b)/.test(s)?42:36;
- if(family==='Mistral')return /\\blarge\\b/.test(s)?60:/magistral|codestral|devstral/.test(s)?48:/\\bmedium\\b/.test(s)?40:/ministral|\\bsmall\\b/.test(s)?22:/\\btiny\\b|\\bnano\\b/.test(s)?10:35;
- if(family==='Meta Llama')return /\\binstruct\\b/.test(s)?38:35;
- if(/\\bpro\\b|\\bopus\\b|\\bmax\\b|\\bultra\\b|\\blarge\\b/.test(s))return 50;
- if(/sonnet|reasoner|reasoning|\\bcoder\\b|\\bplus\\b/.test(s))return 45;
- if(/\\bflash[-_. ]?lite\\b|\\bnano\\b|\\btiny\\b|\\bhaiku\\b/.test(s))return 10;
- if(/\\bmini\\b|\\bsmall\\b|\\bflash\\b/.test(s))return 20;
+ if(family==='Claude')return /\bopus\b/.test(s)?60:/\bsonnet\b/.test(s)?50:/\bhaiku\b/.test(s)?20:35;
+ if(family==='Gemini')return /\bpro\b|\bultra\b/.test(s)?60:/flash[-_. ]?lite|flashlite/.test(s)?10:/\bflash\b/.test(s)?35:45;
+ if(family==='ChatGPT / OpenAI')return /\bpro\b/.test(s)?60:/\bnano\b/.test(s)?10:/\bmini\b/.test(s)?20:/\bturbo\b/.test(s)?30:/\bo[1-9](?:[-_. ]|$)|reasoning|think/.test(s)?50:40;
+ if(family==='Qwen')return /\bmax\b/.test(s)?60:/\bplus\b/.test(s)?55:/\bcoder\b/.test(s)?48:/\bturbo\b/.test(s)?40:/\bflash\b/.test(s)?32:/\bmini\b|\bsmall\b|0[._-]?5b/.test(s)?15:38;
+ if(family==='DeepSeek')return /\bpro\b/.test(s)?60:/\br1\b|reasoner/.test(s)?52:/\bmini\b|distill/.test(s)?20:/deepseek[-_ ]?v?4(?:[._-]|\b)/.test(s)?48:/deepseek[-_ ]?v?3(?:[._-]|\b)/.test(s)?42:36;
+ if(family==='Mistral')return /\blarge\b/.test(s)?60:/magistral|codestral|devstral/.test(s)?48:/\bmedium\b/.test(s)?40:/ministral|\bsmall\b/.test(s)?22:/\btiny\b|\bnano\b/.test(s)?10:35;
+ if(family==='Meta Llama')return /\binstruct\b/.test(s)?38:35;
+ if(/\bpro\b|\bopus\b|\bmax\b|\bultra\b|\blarge\b/.test(s))return 50;
+ if(/sonnet|reasoner|reasoning|\bcoder\b|\bplus\b/.test(s))return 45;
+ if(/\bflash[-_. ]?lite\b|\bnano\b|\btiny\b|\bhaiku\b/.test(s))return 10;
+ if(/\bmini\b|\bsmall\b|\bflash\b/.test(s))return 20;
  return 35;
 }
 function modelParameterSize(x){
  const s=String(x.m.model||x.m.id||'')+' '+x.name;
  let best=0,hit;
- const re=/(\\d+(?:\\.\\d+)?)\\s*b\\b/gi;
+ const re=/(\d+(?:\.\d+)?)\s*b\b/gi;
  while((hit=re.exec(s))!==null)best=Math.max(best,Number(hit[1])||0);
  return best;
 }
