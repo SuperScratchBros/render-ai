@@ -40,7 +40,7 @@ Set these in the Render dashboard (**Service → Environment**). Secrets use `sy
 | `APP_SECRET_KEY` | Long random string used to sign the anonymous user cookie. |
 | `SUPABASE_URL` | Your Supabase project URL. |
 | `SUPABASE_SERVICE_ROLE_KEY` | Supabase service-role key (server only). |
-| At least one chat key | `GROQ_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY` or `XKIRO_API_KEY`. |
+| At least one chat key | `GROQ_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY`, `XKIRO_API_KEY` or `KIOSAPI_API_KEY`. |
 
 ### Provider keys
 
@@ -48,7 +48,7 @@ Set these in the Render dashboard (**Service → Environment**). Secrets use `sy
 | --- | --- |
 | `GROQ_API_KEY` | Groq chat and Write Code mode. |
 | `GEMINI_API_KEY` | Google Gemini chat. |
-| `OPENROUTER_API_KEY` | OpenRouter chat (also used as a fallback). |
+| `OPENROUTER_API_KEY` | OpenRouter chat (also used as a fallback). |\n| `KIOSAPI_API_KEY` | KiosAPI live chat-model catalog and model completions. Set this key privately in Render; never commit it. |
 | `XKIRO_API_KEY` | xKiro free chat models and xKiro image generation. |
 | `NVIDIA_API_KEY` | NVIDIA NIM chat models, NVIDIA Code Studio, and FLUX.2 Klein 4B image generation. Create it at [build.nvidia.com](https://build.nvidia.com/). Add the key privately in Render → Environment; never commit it. |
 | `TAVILY_API_KEY` | Fast Search. |
@@ -64,7 +64,7 @@ Set these in the Render dashboard (**Service → Environment**). Secrets use `sy
 | `GROQ_MODEL` | `openai/gpt-oss-120b` | Groq model ID. |
 | `GEMINI_MODEL` | `gemini-3.8-flash` | Gemini model ID. |
 | `OPENROUTER_MODEL` | `openrouter/free` | OpenRouter model ID. |
-| `XKIRO_MODEL` | first free model | Default xKiro chat model. Must be a free model. |
+| `XKIRO_MODEL` | first free model | Default xKiro chat model. Must be a free model. |\n| `KIOSAPI_BASE_URL` | `https://api.kiosapi.id/v1` | KiosAPI OpenAI-compatible API base URL. |\n| `KIOSAPI_MODEL` | `deepseek/deepseek-v4-flash` | Fallback/default KiosAPI chat model if its live catalog cannot be reached. |
 | `XKIRO_IMAGE_MODEL` | first free image model (`sensenova/sensenova-u1.5-lite`) | xKiro image model. Must be a free model. |
 | `XKIRO_BASE_URL` | `https://api.xkiro.com/v1` | xKiro API base URL. |
 | `NVIDIA_BASE_URL` | `https://integrate.api.nvidia.com/v1` | NVIDIA's OpenAI-compatible chat API. |
