@@ -38,7 +38,7 @@ let modelFamilyView=null;
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function md(s){try{const raw=String(s||'');const html=(window.marked&&window.DOMPurify)?DOMPurify.sanitize(marked.parse(raw,{breaks:true,gfm:true})):esc(raw).replace(/\n/g,'<br>');const box=document.createElement('div');box.innerHTML=html;if(window.renderMathInElement){const bs=String.fromCharCode(92);renderMathInElement(box,{delimiters:[{left:'$$',right:'$$',display:true},{left:bs+'[',right:bs+']',display:true},{left:bs+'(',right:bs+')',display:false},{left:'$',right:'$',display:false}],throwOnError:false,strict:'ignore'});}return box.innerHTML}catch(e){return esc(s).replace(/\n/g,'<br>')}}
 function show(view){document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));$(view+'View').classList.add('active');document.querySelectorAll('.navbtn').forEach(b=>b.classList.toggle('active',b.dataset.view===view));if(view==='models')renderModels();if(view==='usage')loadUsage();if(view==='images')renderImageModels();if(view==='code')renderCodeModels();$('topTitle').innerHTML=view==='images'?'NLGEP <span>Images</span><span class="ng-badge">NLGEP</span>':view==='code'?'NLGEP <span>Code Studio</span><span class="ng-badge">NLGEP</span>':'NLGEP <span>AI</span><span class="ng-badge">NLGEP</span>'}
-function setModel(id){selected=id;localStorage.setItem('render-ai-model',id);renderModels();show('chat');$('send').disabled=!$('prompt').value.trim()}
+function setModel(id){selected=id;modelFamilyView=null;localStorage.setItem('render-ai-model',id);renderModels();show('chat');$('send').disabled=!$('prompt').value.trim()}
 function modelDetails(m){
  let source='Model',name=String(m.label||m.model||m.id),id=String(m.id||'');
  if(m.provider==='nvidia'||id.startsWith('nvidia:')){
@@ -118,9 +118,13 @@ function modelFamilyMark(name){
  return marks[name]||String(name).split(/\s+/).map(p=>p[0]).join('').slice(0,3).toUpperCase();
 }
 function assignModelFamilies(items){
- const counts={};
- items.forEach(x=>{x.candidateFamily=modelFamilyCandidate(x);counts[x.candidateFamily]=(counts[x.candidateFamily]||0)+1});
- items.forEach(x=>{const f=x.candidateFamily;x.family=(f==='Miscellaneous'||(!coreModelFamilies.includes(f)&&(counts[f]||0)<3))?'Miscellaneous':f});
+ const variants={};
+ items.forEach(x=>{
+  x.candidateFamily=modelFamilyCandidate(x);
+  if(!variants[x.candidateFamily])variants[x.candidateFamily]=new Set();
+  variants[x.candidateFamily].add(String(x.m.model||x.m.id||'').replace(/^(kiosapi|xkiro|nvidia):/i,'').toLowerCase());
+ });
+ items.forEach(x=>{const f=x.candidateFamily;x.family=(f==='Miscellaneous'||(!coreModelFamilies.includes(f)&&(variants[f]||new Set()).size<3))?'Miscellaneous':f});
  return items;
 }
 function familyOrder(a,b){
