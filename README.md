@@ -91,7 +91,7 @@ Every provider has four limits. The variable name is the provider prefix plus th
 | `GROQ` | Groq chat and code | 900 | 27000 | 10 | 3 |
 | `GEMINI` | Gemini chat | 18 | 540 | 4 | 2 |
 | `OPENROUTER` | OpenRouter chat | 45 | 1350 | 10 | 3 |
-| `XKIRO` | xKiro free chat | 200 | 6000 | 15 | 3 |
+| `XKIRO` | xKiro free chat | 200 | 6000 | 15 | 3 |\n| `KIOSAPI` | KiosAPI chat | 200 | 6000 | 15 | 3 |
 | `XKIRO_IMAGE` | xKiro free images | 60 | 1800 | 3 | 1 |
 | `NVIDIA` | NVIDIA NIM chat and Code Studio | 300 | 9000 | 12 | 3 |
 | `NVIDIA_IMAGE` | NVIDIA FLUX.2 Klein 4B images | 45 | 1350 | 3 | 1 |
