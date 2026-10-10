@@ -42,6 +42,8 @@ XKIRO_BASE_URL = (os.getenv("XKIRO_BASE_URL", "").strip() or "https://api.xkiro.
 XKIRO_FREE_IMAGE_FALLBACK = "sensenova/sensenova-u1.5-lite"  # xKiro's documented free-tier image model
 NVIDIA_BASE_URL = (os.getenv("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1").strip() or "https://integrate.api.nvidia.com/v1").rstrip("/")
 NVIDIA_IMAGE_MODEL = (os.getenv("NVIDIA_IMAGE_MODEL", "black-forest-labs/flux.2-klein-4b").strip() or "black-forest-labs/flux.2-klein-4b")
+KIOSAPI_BASE_URL = (os.getenv("KIOSAPI_BASE_URL", "https://api.kiosapi.id/v1").strip() or "https://api.kiosapi.id/v1").rstrip("/")
+KIOSAPI_MODEL = (os.getenv("KIOSAPI_MODEL", "deepseek/deepseek-v4-flash").strip() or "deepseek/deepseek-v4-flash")
 NVIDIA_IMAGE_URL = "https://ai.api.nvidia.com/v1/genai/" + NVIDIA_IMAGE_MODEL
 IMAGE_DEFAULT_PROVIDER = os.getenv("IMAGE_DEFAULT_PROVIDER", "nvidia").strip().lower()
 if IMAGE_DEFAULT_PROVIDER not in {"cloudflare", "xkiro", "nvidia"}:
@@ -54,6 +56,7 @@ MODELS = {
     # default (XKIRO_MODEL); the person can pick any free model from xKiro's live catalog in the UI.
     "xkiro": {"label": "xKiro: free models", "model": os.getenv("XKIRO_MODEL", "").strip(), "url": f"{XKIRO_BASE_URL}/chat/completions", "key": "XKIRO_API_KEY"},
     "nvidia": {"label": "NVIDIA NIM", "model": "deepseek-ai/deepseek-v4.1-flash", "url": f"{NVIDIA_BASE_URL}/chat/completions", "key": "NVIDIA_API_KEY"},
+    "kiosapi": {"label": "KiosAPI", "model": KIOSAPI_MODEL, "url": f"{KIOSAPI_BASE_URL}/chat/completions", "key": "KIOSAPI_API_KEY"},
 }
 
 # Friendly names + groupings used by the usage dashboard.
@@ -63,6 +66,7 @@ PROVIDER_META = {
     "openrouter": ("OpenRouter", "chat"),
     "xkiro": ("xKiro · free chat models", "chat"),
     "nvidia": ("NVIDIA NIM · free chat models", "chat"),
+    "kiosapi": ("KiosAPI · chat models", "chat"),
     "nvidia_image": ("NVIDIA FLUX.2 Klein 4B", "image"),
     "tavily": ("Tavily · fast search", "search"),
     "exa": ("Exa · deep search", "search"),
@@ -151,6 +155,7 @@ _xkiro_cache = {"at": 0.0, "models": []}
 _xkiro_image_cache = {"at": 0.0, "models": []}
 _xkiro_usage_cache = {"at": 0.0, "data": None}
 _nvidia_cache = {"at": 0.0, "models": []}
+_kiosapi_cache = {"at": 0.0, "models": []}
 
 # NVIDIA Build free inference endpoints that support chat/text generation.
 # Non-chat services (embeddings, classifiers, TTS/ASR, tabular and video-only models) are excluded.
@@ -233,9 +238,92 @@ def nvidia_catalog():
     return models
 
 
+def kiosapi_is_chat_model(item):
+    """Keep text/chat-capable endpoints in the chat picker, excluding media and utility APIs."""
+    model_id = item.get("id", "")
+    if not isinstance(model_id, str) or not model_id.strip():
+        return False
+    model_id = model_id.strip().lower()
+
+    for field in ("task", "modality", "type", "capability"):
+        value = item.get(field)
+        if isinstance(value, str):
+            task = value.lower().replace("-", "_").replace(" ", "_")
+            if any(term in task for term in (
+                "embedding", "rerank", "image_generation", "text_to_image",
+                "video_generation", "text_to_video", "text_to_speech",
+                "speech_to_text", "transcription", "music_generation",
+                "ocr", "document_ai",
+            )):
+                return False
+    endpoints = item.get("supported_endpoints")
+    if isinstance(endpoints, list) and endpoints:
+        normalized = [str(x).lower() for x in endpoints]
+        if not any("chat" in x or "completion" in x for x in normalized):
+            return False
+
+    non_chat_markers = (
+        "embedding", "rerank", "ranker", "-ocr", "/ocr", "document-ai",
+        "gpt-image", "/imagen-", "imagen-3", "nano-banana", "imagine-image",
+        "wan-2.7-image", "image-01", "glm-image", "/veo-", "video",
+        "-t2v", "-i2v", "seedance", "hailuo", "/h3", "lyria", "music-",
+        "/tts", "speech-", "-tts", "-stt", "-asr", "transcribe", "whisper",
+    )
+    return not any(marker in model_id for marker in non_chat_markers)
+
+
+def kiosapi_catalog():
+    """Fetch and cache chat-capable models exposed by the configured KiosAPI key."""
+    key = clean_key(os.getenv("KIOSAPI_API_KEY", ""))
+    if not key:
+        return []
+    now = time.time()
+    if _kiosapi_cache["models"] and now - _kiosapi_cache["at"] < 300:
+        return _kiosapi_cache["models"]
+    try:
+        r = httpx.get(
+            f"{KIOSAPI_BASE_URL}/models",
+            headers={"Authorization": f"Bearer {key}", "Accept": "application/json"},
+            timeout=15,
+        )
+        if r.status_code == 200:
+            payload = r.json()
+            entries = payload.get("data", []) if isinstance(payload, dict) else []
+            models, seen = [], set()
+            for item in entries:
+                if not isinstance(item, dict) or not kiosapi_is_chat_model(item):
+                    continue
+                model_id = item["id"].strip()
+                if model_id in seen:
+                    continue
+                seen.add(model_id)
+                models.append({
+                    "id": model_id,
+                    "label": model_id,
+                    "access_tier": item.get("access_tier") or item.get("tier"),
+                })
+            if models:
+                models.sort(key=lambda item: item["id"].casefold())
+                _kiosapi_cache.update(at=now, models=models)
+                return models
+    except (httpx.HTTPError, ValueError, TypeError, AttributeError):
+        pass
+    if _kiosapi_cache["models"]:
+        return _kiosapi_cache["models"]
+    return [{"id": KIOSAPI_MODEL, "label": KIOSAPI_MODEL}]
+
+
 def resolve_model(provider, requested=None):
     """Return the exact model ID to send, validating providers with a free model catalog."""
     cfg = MODELS[provider]
+    if provider == "kiosapi":
+        if not clean_key(os.getenv("KIOSAPI_API_KEY", "")):
+            raise HTTPException(503, "KiosAPI is not configured. Add KIOSAPI_API_KEY in Render.")
+        requested = (requested or "").strip() or cfg["model"]
+        allowed = {m["id"] for m in kiosapi_catalog()}
+        if requested not in allowed:
+            raise HTTPException(400, "Choose a chat model from the current KiosAPI model list.")
+        return requested
     if provider == "nvidia":
         requested = (requested or "").strip() or cfg["model"]
         allowed = {m["id"] for m in nvidia_catalog()}
@@ -287,6 +375,15 @@ def resolve_xkiro_image_model(requested=None):
 
 
 def provider_error_message(provider, status, model_name):
+    if provider == "kiosapi":
+        if status == 401:
+            return "KiosAPI rejected the API key. Check KIOSAPI_API_KEY in Render."
+        if status == 402:
+            return "KiosAPI reports that the account balance or model allowance is exhausted."
+        if status == 403:
+            return f"KiosAPI denied access to '{model_name}'. Check its access and pricing in your KiosAPI account."
+        if status == 404:
+            return f"KiosAPI could not find model '{model_name}'. Refresh the model list and choose an available model."
     if provider == "xkiro":
         if status == 401:
             return "xKiro rejected the API key. Check XKIRO_API_KEY in Render."
@@ -320,7 +417,7 @@ def verified_user_id(cookie):
     return user_id
 
 
-DEFAULT_LIMITS = {"groq": (900, 27000), "gemini": (18, 540), "openrouter": (45, 1350), "xkiro": (200, 6000), "xkiro_image": (60, 1800), "nvidia": (300, 9000), "nvidia_image": (45, 1350), "tavily": (100, 1000), "exa": (20, 600), "cloudflare": (90, 2700)}
+DEFAULT_LIMITS = {"groq": (900, 27000), "gemini": (18, 540), "openrouter": (45, 1350), "xkiro": (200, 6000), "xkiro_image": (60, 1800), "nvidia": (300, 9000), "nvidia_image": (45, 1350), "kiosapi": (200, 6000), "tavily": (100, 1000), "exa": (20, 600), "cloudflare": (90, 2700)}
 
 USER_DAILY_LIMITS = {
     "groq": 10,
@@ -330,6 +427,7 @@ USER_DAILY_LIMITS = {
     "xkiro_image": 3,
     "nvidia": 12,
     "nvidia_image": 3,
+    "kiosapi": 15,
     "tavily": 5,
     "exa": 3,
     "cloudflare": 3,
@@ -343,6 +441,7 @@ USER_PER_MINUTE_LIMITS = {
     "xkiro_image": 1,
     "nvidia": 3,
     "nvidia_image": 1,
+    "kiosapi": 3,
     "tavily": 2,
     "exa": 1,
     "cloudflare": 1,
@@ -805,7 +904,7 @@ def ai_start_prompt(provider, mode, model_name=None, instructions=None):
     cfg = MODELS[provider]
     model_name = model_name or cfg["model"]
     today, current_time, tz_name = current_ai_datetime()
-    provider_name = {"groq": "Groq", "gemini": "Google Gemini", "openrouter": "OpenRouter", "xkiro": "xKiro", "nvidia": "NVIDIA NIM"}.get(provider, provider)
+    provider_name = {"groq": "Groq", "gemini": "Google Gemini", "openrouter": "OpenRouter", "xkiro": "xKiro", "nvidia": "NVIDIA NIM", "kiosapi": "KiosAPI"}.get(provider, provider)
     prompt = (
         f"You are NLGEP AI, an AI assistant in the NLGEP/Render AI platform. "
         f"Your model is {model_name}. Your provider is {provider_name}. "
@@ -928,7 +1027,14 @@ def resolve_selected_chat_model(selection):
         if not clean_key(os.getenv("NVIDIA_API_KEY", "")):
             raise HTTPException(503, "NVIDIA NIM is not configured. Add NVIDIA_API_KEY in Render.")
         return "nvidia", requested
-    if selection not in MODELS or selection in {"xkiro", "nvidia"}:
+    if selection.startswith("kiosapi:"):
+        requested = selection.split(":", 1)[1].strip()
+        if not requested:
+            raise HTTPException(400, "Invalid KiosAPI model selection.")
+        if not clean_key(os.getenv("KIOSAPI_API_KEY", "")):
+            raise HTTPException(503, "KiosAPI is not configured. Add KIOSAPI_API_KEY in Render.")
+        return "kiosapi", requested
+    if selection not in MODELS or selection in {"xkiro", "nvidia", "kiosapi"}:
         raise HTTPException(400, "Choose a valid AI model before sending a message.")
     return selection, None
 
@@ -1098,7 +1204,8 @@ def config():
         "nvidia": nvidia_key_configured,
     }
     image_default = IMAGE_DEFAULT_PROVIDER if image_providers.get(IMAGE_DEFAULT_PROVIDER) else next((k for k, v in image_providers.items() if v), IMAGE_DEFAULT_PROVIDER)
-    chat_models = [{"id": k, "label": v["label"], "model": v["model"], "configured": bool(clean_key(os.getenv(v["key"], "")))} for k, v in MODELS.items() if k not in {"xkiro", "nvidia"}]
+    kiosapi_key_configured = bool(clean_key(os.getenv("KIOSAPI_API_KEY", "")))
+    chat_models = [{"id": k, "label": v["label"], "model": v["model"], "configured": bool(clean_key(os.getenv(v["key"], "")))} for k, v in MODELS.items() if k not in {"xkiro", "nvidia", "kiosapi"}]
     xkiro_key_configured = bool(clean_key(os.getenv("XKIRO_API_KEY", "")))
     if xkiro_key_configured:
         for xm in xkiro_catalog():
@@ -1119,6 +1226,25 @@ def config():
             "provider": "nvidia",
             "configured": nvidia_key_configured,
             "access_tier": "free",
+        })
+    kiosapi_models = kiosapi_catalog() if kiosapi_key_configured else []
+    if kiosapi_models:
+        for km in kiosapi_models:
+            chat_models.append({
+                "id": "kiosapi:" + km["id"],
+                "label": "KiosAPI: " + km["id"],
+                "model": km["id"],
+                "provider": "kiosapi",
+                "configured": True,
+                "access_tier": km.get("access_tier"),
+            })
+    else:
+        chat_models.append({
+            "id": "kiosapi:" + KIOSAPI_MODEL,
+            "label": "KiosAPI: " + KIOSAPI_MODEL,
+            "model": KIOSAPI_MODEL,
+            "provider": "kiosapi",
+            "configured": kiosapi_key_configured,
         })
     code_models = [dict(m, configured=nvidia_key_configured) for m in nvidia_models if m["id"] in NVIDIA_CODE_MODEL_IDS]
     return {
