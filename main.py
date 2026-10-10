@@ -1647,7 +1647,7 @@ def ask(body: AskRequest, response: Response, render_ai_user: str | None = Cooki
         if item.get("role") in {"user", "assistant"} and isinstance(item.get("content"), str)
     ]
     ai_provider = "groq" if body.mode == "code" else selected_provider
-    requested_model = selected_model if selected_provider in {"xkiro", "nvidia"} else body.xkiro_model
+    requested_model = selected_model if selected_provider in {"xkiro", "nvidia", "kiosapi"} else body.xkiro_model
     resolve_model(ai_provider, requested_model)
     search_provider = "tavily" if body.mode == "fast-search" else "exa" if body.mode == "deep-search" else None
     if search_provider:
@@ -1677,7 +1677,7 @@ def ask_stream(body: AskRequest, response: Response, render_ai_user: str | None 
         if item.get("role") in {"user", "assistant"} and isinstance(item.get("content"), str)
     ]
     ai_provider = "groq" if body.mode == "code" else selected_provider
-    requested_model = selected_model if selected_provider in {"xkiro", "nvidia"} else body.xkiro_model
+    requested_model = selected_model if selected_provider in {"xkiro", "nvidia", "kiosapi"} else body.xkiro_model
     model_name = resolve_model(ai_provider, requested_model)
     search_provider = "tavily" if body.mode == "fast-search" else "exa" if body.mode == "deep-search" else None
     if search_provider:
