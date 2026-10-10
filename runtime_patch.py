@@ -162,7 +162,12 @@ def config_with_kiosapi():
     data["models"] = [item for item in data.get("models", []) if item.get("id") != "kiosapi"]
     catalog = kiosapi_catalog() if key else []
     if catalog:
-        data["models"].extend(catalog_entry for catalog_entry in catalog)
+        for catalog_entry in catalog:
+            data["models"].append({
+                **catalog_entry,
+                "id": "kiosapi:" + catalog_entry["id"],
+                "model": catalog_entry["id"],
+            })
     else:
         data["models"].append({
             "id": "kiosapi:" + default_model,
@@ -247,7 +252,7 @@ def generate_nvidia_image(prompt, user_id):
                 raise HTTPException(502, "NVIDIA returned no generated image data.")
 
             main.record_usage(user_id, "nvidia_image", "image", model)
-            return result
+            return {"url": result, "model": model}
 
         try:
             body = response.json()
