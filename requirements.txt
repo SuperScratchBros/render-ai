@@ -4,3 +4,4 @@ httpx
 tavily-python
 python-multipart
 pydantic
+python-dotenv

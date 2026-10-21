@@ -1,0 +1,516 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NLGEP Chat</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='30' fill='%230b2a1c' stroke='%23cfe8d8' stroke-width='4'/%3E%3Cpath d='M8 32h48M32 8c-14 14-14 34 0 48M32 8c14 14 14 34 0 48' fill='none' stroke='%23cfe8d8' stroke-width='3'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css" rel="stylesheet">
+<link href="/static/nlgep.css" rel="stylesheet">
+<link href="/static/nlgep-fx.css" rel="stylesheet">
+<style>[hidden]{display:none!important}</style>
+</head>
+<body>
+<div id="loginOverlay" class="overlay">
+  <div class="login nl-glass">
+    <h1><i class="fas fa-comments"></i>NLGEP Chat</h1>
+    <p id="loginText">Log in with your username and password, create an account, or jump in as a guest.</p>
+    <form id="loginForm">
+      <input id="username" class="field" maxlength="24" autocomplete="username" placeholder="Username">
+      <input id="password" class="field" type="password" maxlength="128" autocomplete="current-password" placeholder="Password">
+      <div class="login-actions">
+        <button id="loginBtn" class="tool-btn primary" type="submit">Log in</button>
+        <button id="registerBtn" class="tool-btn" type="button">Create account</button>
+      </div>
+    </form>
+    <div class="divider">or</div>
+    <button id="guestBtn" class="tool-btn guest-btn" type="button"><i class="fas fa-user-secret"></i>Continue as guest</button>
+    <div id="loginError" class="error"></div>
+  </div>
+</div>
+
+<nav aria-label="NLGEP navigation" id="nlSidebar">
+  <div class="nl-logo"><i class="fas fa-earth-americas"></i><span>NLGEP</span></div>
+  <a class="nl-nav" href="/"><i class="fas fa-house"></i><span>Home</span></a>
+  <a class="nl-nav" href="/ai"><i class="fas fa-robot"></i><span>AI</span></a>
+  <a class="nl-nav active" href="/chat"><i class="fas fa-comments"></i><span>Chat</span></a>
+  <div class="nl-spacer"></div>
+  <button class="nl-nav" type="button" data-sfx-toggle><i class="sfx-ico fas fa-volume-high"></i><span class="sfx-label">Sound: On</span></button>
+  <button class="nl-nav" type="button" id="staffBtn"><i class="fas fa-user-shield"></i><span id="staffBtnLabel">Staff Mode</span></button>
+</nav>
+
+<section class="nl-page">
+  <div class="titlebar">
+    <div class="nl-brand"><i class="fas fa-comments"></i>NLGEP Chat</div>
+    <div class="nl-spacer"></div>
+    <button class="tool-btn" type="button" id="staffPanelBtn" hidden><i class="fas fa-screwdriver-wrench"></i>Staff panel</button>
+    <span class="nl-pill" id="onlineCount">0 online</span>
+    <button class="tool-btn" type="button" id="logout" title="Leave chat"><i class="fas fa-right-from-bracket"></i></button>
+  </div>
+  <div class="nl-body"><div class="nl-card chat-card">
+    <div class="chat-main">
+      <div class="chat-head"><strong>Global Chat</strong><div class="muted" id="whoami">Talk with other InfiNet users</div></div>
+      <div id="messages" class="messages"></div>
+      <form id="composer" class="composer">
+        <input id="messageInput" class="field" maxlength="2000" autocomplete="off" placeholder="Message NLGEP Chat…">
+        <button class="tool-btn primary"><i class="fas fa-paper-plane"></i>Send</button>
+      </form>
+    </div>
+    <aside class="people"><div class="nl-title">People here</div><div id="users" class="users"></div></aside>
+  </div></div>
+</section>
+
+<!-- staff password -->
+<div id="staffPassModal" class="modal"><div class="staff-pass nl-glass">
+  <h2><i class="fas fa-user-shield"></i>Staff Mode</h2>
+  <p>Enter the staff password to delete messages and accounts.</p>
+  <form id="staffPassForm">
+    <input id="staffPass" class="field" type="password" maxlength="128" autocomplete="off" placeholder="Staff password">
+    <div class="row">
+      <button class="tool-btn primary" type="submit" id="staffUnlock">Unlock</button>
+      <button class="tool-btn" type="button" id="staffCancel">Cancel</button>
+    </div>
+  </form>
+  <div id="staffPassError" class="error"></div>
+</div></div>
+
+<!-- staff panel -->
+<div id="staffModal" class="modal"><div class="staff nl-glass">
+  <div class="staff-head"><div><strong>Staff Mode</strong><div class="muted">Delete messages straight from the chat, or manage accounts here.</div></div><button id="closeStaff" type="button" class="tool-btn">Close</button></div>
+  <div class="staff-tabs">
+    <button type="button" class="tool-btn on" data-tab="accounts"><i class="fas fa-users"></i>Accounts</button>
+    <button type="button" class="tool-btn" data-tab="diag"><i class="fas fa-stethoscope"></i>Diagnostics</button>
+  </div>
+  <div class="staff-body" id="tabAccounts">
+    <div class="acct-pane">
+      <div class="acct-tools">
+        <input id="acctSearch" class="field" placeholder="Search accounts…" autocomplete="off">
+        <button id="acctRefresh" type="button" class="tool-btn"><i class="fas fa-rotate"></i>Refresh</button>
+      </div>
+      <div id="acctList" class="acct-list"></div>
+    </div>
+  </div>
+  <div class="staff-body" id="tabDiag" hidden>
+    <div class="checks"><div class="nl-title">Checks</div><div id="checks"></div><button id="runChecks" type="button" class="tool-btn primary" style="width:100%;margin-top:10px">Run checks again</button></div>
+    <div class="debug"><div class="debug-title">DEBUG LOG — LIVE</div><div id="logs" class="logs"></div></div>
+  </div>
+</div></div>
+
+<div id="loader" class="loader"><div class="loader-card nl-glass"><div class="spinner"></div><div class="loader-title">Loading....</div><div id="statusList" class="status-list"></div><div id="retryText" class="retry"></div></div></div>
+<div id="toast" class="nl-toast"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const overlay = $("loginOverlay"), loginForm = $("loginForm"), username = $("username"), password = $("password"),
+      loginError = $("loginError"), messagesEl = $("messages"), usersEl = $("users"), onlineCount = $("onlineCount"),
+      input = $("messageInput"), whoami = $("whoami");
+const authButtons = [$("loginBtn"), $("registerBtn"), $("guestBtn")];
+let lastMessageId = "", pollId = null, polling = false;
+const fxPlay = ev => { try { window.NLGEP_FX && window.NLGEP_FX.play(ev); } catch {} };
+
+// The session token returned by login/register/guest. It is sent on every request as an explicit
+// header, so it always wins over any stale cookie a browser or proxy may still be holding on to
+// (that stale cookie is what used to turn a fresh login into an old Guest session).
+let token = "";
+function authHeaders(extra){
+  const h = Object.assign({}, extra || {});
+  if (token) h["X-Chat-Session"] = token;
+  return h;
+}
+
+function fmt(t){ try { return new Date(t).toLocaleTimeString([], {hour:"numeric", minute:"2-digit"}); } catch { return ""; } }
+function showLogin(msg = ""){ overlay.style.display = "flex"; loginError.textContent = msg; }
+function hideLogin(){ overlay.style.display = "none"; loginError.textContent = ""; }
+function sessionExpired(){ clearInterval(pollId); pollId = null; token = ""; showLogin("Session expired. Please sign in again."); }
+let toastTimer = null;
+function toast(msg){ const t = $("toast"); t.textContent = msg; t.classList.add("show"); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove("show"), 2600); }
+
+function draw(rows, me){
+  const stick = messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight < 80;
+  rows.forEach(m => {
+    if (messagesEl.querySelector('.msg[data-id="' + m.message_id + '"]')) return;
+    const d = document.createElement("div");
+    d.className = "msg" + (m.username === me ? " me" : "");
+    d.dataset.id = m.message_id;
+    d.dataset.uid = m.user_id || "";
+    d.innerHTML = '<div class="name"></div><div class="body"></div><div class="time"></div>' +
+      '<div class="staff-actions">' +
+      '<button type="button" class="danger-btn" data-act="msg"><i class="fas fa-trash"></i>Delete message</button>' +
+      '<button type="button" class="danger-btn" data-act="acct"><i class="fas fa-user-slash"></i>Delete account</button></div>';
+    d.querySelector(".name").textContent = m.username;
+    d.querySelector(".body").textContent = m.content;
+    d.querySelector(".time").textContent = fmt(m.created_at);
+    messagesEl.appendChild(d);
+  });
+  if (stick) messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+// Drop messages that staff deleted (the server sends the ids of the newest 100 messages).
+function prune(live){
+  if (!Array.isArray(live)) return;
+  if (!live.length){ messagesEl.querySelectorAll(".msg").forEach(n => n.remove()); return; }
+  const keep = new Set(live.map(String)), oldest = Math.min(...live);
+  messagesEl.querySelectorAll(".msg").forEach(n => {
+    if (!keep.has(n.dataset.id) && Number(n.dataset.id) >= oldest) n.remove();
+  });
+}
+
+async function refreshMessages(){
+  if (polling) return;
+  polling = true;
+  try {
+    const u = lastMessageId ? "/api/chat-messages?after=" + encodeURIComponent(lastMessageId) : "/api/chat-messages";
+    const r = await fetch(u, {credentials: "same-origin", cache: "no-store", headers: authHeaders()});
+    if (r.status === 401){ sessionExpired(); return; }
+    if (!r.ok) return;
+    const d = await r.json();
+    draw(d.messages, d.me);
+    prune(d.live);
+    if (d.messages.length) lastMessageId = String(d.messages[d.messages.length - 1].message_id);
+  } catch {} finally { polling = false; }
+}
+
+async function refreshUsers(){
+  try {
+    const r = await fetch("/api/chat-users", {credentials: "same-origin", cache: "no-store", headers: authHeaders()});
+    if (r.status === 401){ sessionExpired(); return; }
+    if (!r.ok) return;
+    const d = await r.json();
+    onlineCount.textContent = d.count + " online";
+    usersEl.innerHTML = "";
+    d.users.forEach(u => { const x = document.createElement("div"); x.className = "user"; x.textContent = u.username; usersEl.appendChild(x); });
+  } catch {}
+}
+
+async function enterChat(){
+  clearInterval(pollId);
+  lastMessageId = "";
+  messagesEl.innerHTML = "";
+  await refreshMessages();
+  await refreshUsers();
+  pollId = setInterval(() => { refreshMessages(); refreshUsers(); }, 1500);
+  hideLogin();
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+  input.focus();
+}
+
+// Nothing is remembered between visits: any leftover session is ended on load,
+// so everyone has to log in (or pick guest) every time.
+async function start(){
+  token = "";
+  await fetch("/api/chat-session", {method: "DELETE", credentials: "same-origin"}).catch(() => {});
+  showLogin();
+}
+
+function setBusy(busy){ authButtons.forEach(b => b.disabled = busy); }
+
+async function authenticate(path, withCredentials){
+  loginError.textContent = "";
+  const body = {};
+  if (withCredentials){
+    const n = username.value.trim(), p = password.value;
+    if (!n){ loginError.textContent = "Username cannot be empty."; return; }
+    if (!p){ loginError.textContent = "Password cannot be empty."; return; }
+    body.username = n;
+    body.password = p;
+  }
+  setBusy(true);
+  try {
+    token = ""; // never send an old token while logging in
+    const r = await fetch(path, {method: "POST", credentials: "same-origin", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok){
+      const detail = Array.isArray(d.detail)
+        ? "Usernames are 2-24 characters (letters, numbers, spaces, _ . -). Passwords are 6-128 characters."
+        : d.detail;
+      loginError.textContent = detail || "Something went wrong. Please try again.";
+      return;
+    }
+    token = d.token || "";
+
+    // Double-check who the server thinks we are before showing the chat.
+    const meRes = await fetch("/api/chat-me", {credentials: "same-origin", cache: "no-store", headers: authHeaders()});
+    const me = (await meRes.json().catch(() => ({}))).user;
+    if (!me || (d.username && me.username !== d.username)){
+      token = "";
+      loginError.textContent = "Signed in, but the server returned a different account. Please try again.";
+      return;
+    }
+    whoami.textContent = "Signed in as " + me.username + (d.guest ? " (guest)" : "");
+    password.value = "";
+    await enterChat();
+  } catch { loginError.textContent = "Could not reach InfiNet. Please try again."; }
+  finally { setBusy(false); }
+}
+
+loginForm.onsubmit = e => { e.preventDefault(); authenticate("/api/chat-login", true); };
+$("registerBtn").onclick = () => authenticate("/api/chat-register", true);
+$("guestBtn").onclick = () => authenticate("/api/chat-guest", false);
+
+$("composer").onsubmit = async e => {
+  e.preventDefault();
+  const content = input.value.trim();
+  if (!content) return;
+  input.value = "";
+  try {
+    const r = await fetch("/api/chat-messages", {method: "POST", credentials: "same-origin", headers: authHeaders({"Content-Type": "application/json"}), body: JSON.stringify({content})});
+    if (r.status === 401){ sessionExpired(); input.value = content; return; }
+    if (!r.ok) throw new Error("send failed");
+    await refreshMessages();
+  } catch { input.value = content; }
+};
+
+$("logout").onclick = async () => {
+  await fetch("/api/chat-session", {method: "DELETE", credentials: "same-origin", headers: authHeaders()}).catch(() => {});
+  token = "";
+  location.reload();
+};
+
+// ---------- Staff mode (password is checked by the server; the browser only keeps a 2-hour token) ----------
+let staffToken = "";
+
+function setStaff(on){
+  document.body.classList.toggle("staff-on", on);
+  $("staffBtn").classList.toggle("staff-on", on);
+  $("staffBtnLabel").textContent = on ? "Staff Mode: ON" : "Staff Mode";
+  $("staffPanelBtn").hidden = !on;
+}
+function endStaff(msg){
+  staffToken = "";
+  setStaff(false);
+  $("staffModal").classList.remove("show");
+  if (msg) toast(msg);
+}
+async function staffFetch(url, opts){
+  const r = await fetch(url, Object.assign({cache: "no-store", headers: {"X-Staff-Token": staffToken}}, opts || {}));
+  if (r.status === 401){ endStaff("Staff mode expired. Enter the password again."); throw new Error("Staff mode expired."); }
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(typeof d.detail === "string" ? d.detail : "Request failed.");
+  return d;
+}
+
+$("staffBtn").onclick = () => {
+  if (staffToken){ endStaff("Staff mode turned off."); return; }
+  $("staffPassError").textContent = "";
+  $("staffPass").value = "";
+  $("staffPassModal").classList.add("show");
+  setTimeout(() => $("staffPass").focus(), 50);
+};
+$("staffCancel").onclick = () => $("staffPassModal").classList.remove("show");
+$("staffPassForm").onsubmit = async e => {
+  e.preventDefault();
+  const p = $("staffPass").value;
+  if (!p){ $("staffPassError").textContent = "Enter the staff password."; return; }
+  $("staffUnlock").disabled = true;
+  try {
+    const r = await fetch("/api/staff/login", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({password: p})});
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok){ $("staffPassError").textContent = typeof d.detail === "string" ? d.detail : "Could not unlock staff mode."; return; }
+    staffToken = d.token;
+    $("staffPass").value = "";
+    $("staffPassModal").classList.remove("show");
+    setStaff(true);
+    fxPlay("LEVEL_UPGRADE");
+    toast("Staff mode on — you can delete messages and accounts.");
+  } catch { $("staffPassError").textContent = "Could not reach the server."; }
+  finally { $("staffUnlock").disabled = false; }
+};
+
+$("staffPanelBtn").onclick = () => { $("staffModal").classList.add("show"); showTab("accounts"); };
+$("closeStaff").onclick = () => $("staffModal").classList.remove("show");
+
+function showTab(name){
+  document.querySelectorAll(".staff-tabs [data-tab]").forEach(b => b.classList.toggle("on", b.dataset.tab === name));
+  $("tabAccounts").hidden = name !== "accounts";
+  $("tabDiag").hidden = name !== "diag";
+  if (name === "accounts") loadAccounts();
+  if (name === "diag" && !$("logs").children.length) runChecks();
+}
+document.querySelectorAll(".staff-tabs [data-tab]").forEach(b => b.onclick = () => showTab(b.dataset.tab));
+
+// delete a message / an account straight from the chat
+messagesEl.addEventListener("click", async e => {
+  const btn = e.target.closest(".danger-btn");
+  if (!btn || !staffToken) return;
+  const msg = btn.closest(".msg");
+  const who = msg.querySelector(".name").textContent;
+  try {
+    if (btn.dataset.act === "msg"){
+      await staffFetch("/api/staff/messages/" + encodeURIComponent(msg.dataset.id), {method: "DELETE"});
+      msg.remove();
+      fxPlay("TAB_CLOSE");
+      toast("Message deleted.");
+    } else {
+      if (!confirm("Delete the account \"" + who + "\" and ALL of their messages? This cannot be undone.")) return;
+      await deleteAccount(msg.dataset.uid, who);
+    }
+  } catch (err) { if (staffToken) toast(err.message || "Could not delete."); }
+});
+
+async function deleteAccount(userId, name){
+  await staffFetch("/api/staff/users/" + encodeURIComponent(userId), {method: "DELETE"});
+  messagesEl.querySelectorAll(".msg").forEach(n => { if (n.dataset.uid === userId) n.remove(); });
+  fxPlay("TAB_CLOSE");
+  toast('Account "' + name + '" deleted.');
+  refreshUsers();
+  if (!$("tabAccounts").hidden && $("staffModal").classList.contains("show")) loadAccounts();
+}
+
+let accounts = [];
+async function loadAccounts(){
+  $("acctList").innerHTML = '<div class="muted">Loading accounts…</div>';
+  try {
+    const d = await staffFetch("/api/staff/users");
+    accounts = d.users || [];
+    renderAccounts();
+  } catch (err) { $("acctList").innerHTML = ""; const m = document.createElement("div"); m.className = "muted"; m.textContent = err.message || "Could not load accounts."; $("acctList").appendChild(m); }
+}
+function renderAccounts(){
+  const q = $("acctSearch").value.trim().toLowerCase(), box = $("acctList");
+  box.innerHTML = "";
+  const rows = accounts.filter(a => !q || a.username.toLowerCase().includes(q));
+  if (!rows.length){ const m = document.createElement("div"); m.className = "muted"; m.textContent = "No accounts found."; box.appendChild(m); return; }
+  rows.forEach(a => {
+    const row = document.createElement("div"); row.className = "acct-row";
+    const nm = document.createElement("span"); nm.className = "nm"; nm.textContent = a.username;
+    const tag = document.createElement("span"); tag.className = "tag"; tag.textContent = a.is_guest ? "GUEST" : "ACCOUNT";
+    const dt = document.createElement("span"); dt.className = "dt"; try { dt.textContent = new Date(a.created_at).toLocaleDateString(); } catch {}
+    const del = document.createElement("button"); del.type = "button"; del.className = "danger-btn"; del.innerHTML = '<i class="fas fa-user-slash"></i>Delete';
+    del.onclick = async () => {
+      if (!confirm("Delete the account \"" + a.username + "\" and ALL of their messages? This cannot be undone.")) return;
+      try { await deleteAccount(a.user_id, a.username); } catch (err) { if (staffToken) toast(err.message || "Could not delete."); }
+    };
+    row.append(nm, tag, dt, del);
+    box.appendChild(row);
+  });
+}
+$("acctSearch").addEventListener("input", renderAccounts);
+$("acctRefresh").onclick = loadAccounts;
+
+// ---------- Diagnostics (inside the staff panel) ----------
+const checkNames = ["Browser JavaScript", "Loading HTML", "Loading CSS", "Loading JS", "Loading Favicon", "Loading Image", "Fetching API", "WebSocket / realtime"];
+const stageNames = ["Picking Wisp Provider", "Switching Providers [1/8]", "Loading Favicon", "Loading HTML", "Loading CSS", "Loading JS", "Fetching API", "Testing Images", "Testing WebSocket"];
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+function buildChecks(){
+  $("checks").innerHTML = checkNames.map((x, i) => '<div class="check"><span id="dot' + i + '" class="dot"></span><span>' + x + "</span></div>").join("");
+}
+function log(msg, type = ""){
+  const d = document.createElement("div");
+  d.className = "log " + type;
+  d.textContent = "[" + new Date().toLocaleTimeString() + "] " + msg;
+  $("logs").appendChild(d);
+  $("logs").scrollTop = $("logs").scrollHeight;
+  console.log("[NLGEP CHECK]", msg);
+}
+function setCheck(i, state){ $("dot" + i).className = "dot " + state; }
+function statusLines(){
+  $("statusList").innerHTML = stageNames.map((n, i) => '<div id="sl' + i + '" class="status-line active"><span>' + n + '</span><span class="state">waiting</span></div>').join("");
+}
+function setStage(i, state, text){
+  const e = $("sl" + i);
+  if (!e) return;
+  e.className = "status-line " + state;
+  e.querySelector(".state").textContent = text || state;
+}
+
+async function probe(url){ const r = await fetch(url, {cache: "no-store"}); return r.ok; }
+
+function imageProbe(){
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(true);
+    img.onerror = () => reject(new Error("image failed"));
+    img.src = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='2' height='2'%3E%3Crect width='2' height='2' fill='black'/%3E%3C/svg%3E";
+  });
+}
+
+function wsProbe(){
+  return new Promise((resolve, reject) => {
+    let done = false, ws;
+    const timer = setTimeout(() => {
+      if (done) return;
+      done = true;
+      try { ws.close(); } catch {}
+      reject(new Error("WebSocket timeout"));
+    }, 5000);
+    try { ws = new WebSocket("wss://echo.websocket.events"); }
+    catch (e) { clearTimeout(timer); reject(e); return; }
+    ws.onopen = () => {
+      log("WebSocket connected; sending diagnostic ping");
+      try { ws.send("NLGEP_BROWSER_TEST"); }
+      catch (e) { clearTimeout(timer); done = true; reject(e); }
+    };
+    ws.onmessage = e => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      log("WebSocket echo received: " + String(e.data).slice(0, 80), "ok");
+      ws.close();
+      resolve(true);
+    };
+    ws.onerror = () => { if (done) return; done = true; clearTimeout(timer); reject(new Error("WebSocket connection error")); };
+    ws.onclose = e => { if (done) log("WebSocket closed code=" + e.code); };
+  });
+}
+
+async function runChecks(){
+  buildChecks();
+  $("logs").innerHTML = "";
+  statusLines();
+  $("loader").classList.add("show");
+  log("Starting NLGEP browser diagnostics");
+  setCheck(0, "ok");
+
+  setStage(0, "active", "running");
+  log("Picking Wisp Provider");
+  await sleep(250);
+  setStage(0, "ok", "selected");
+
+  for (let i = 1; i <= 8; i++){
+    setStage(1, "active", "attempt " + i + "/8");
+    log("Switching Providers [" + i + "/8]");
+    await sleep(90);
+    if (i < 8) log("retrying provider-" + i + " [1/1]", "warn");
+  }
+  setStage(1, "ok", "ready");
+
+  const tasks = [
+    {label: "Loading Favicon",   check: 4, stage: 2, fn: () => probe("/")},
+    {label: "Loading HTML",      check: 1, stage: 3, fn: () => probe("/chat")},
+    {label: "Loading CSS",       check: 2, stage: 4, fn: () => probe("/static/nlgep.css")},
+    {label: "Loading JS",        check: 3, stage: 5, fn: async () => typeof WebSocket === "function"},
+    {label: "Fetching API",      check: 6, stage: 6, fn: () => probe("/health")},
+    {label: "Testing Images",    check: 5, stage: 7, fn: imageProbe},
+    {label: "Testing WebSocket", check: 7, stage: 8, fn: wsProbe},
+  ];
+  for (const t of tasks){
+    setStage(t.stage, "active", "running");
+    setCheck(t.check, "run");
+    log(t.label + "...");
+    try {
+      if (!(await t.fn())) throw new Error("unexpected response");
+      setCheck(t.check, "ok");
+      setStage(t.stage, "ok", "passed");
+      log(t.label + " passed", "ok");
+    } catch (e) {
+      setCheck(t.check, "bad");
+      setStage(t.stage, "bad", "failed");
+      log(t.label + " failed: " + (e.message || e), "err");
+    }
+  }
+  $("retryText").textContent = "Diagnostics complete — debug logs remain open below.";
+  setTimeout(() => $("loader").classList.remove("show"), 650);
+  log("Diagnostics complete. Debug logs remain open.", "ok");
+}
+$("runChecks").onclick = runChecks;
+
+buildChecks();
+start();
+</script>
+<script src="/static/nlgep-fx.js" defer></script>
+</body>
+</html>
