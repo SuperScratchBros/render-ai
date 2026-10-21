@@ -1,0 +1,30 @@
+/* NLGEP FX — buttons and cards grow when hovered (messages included). Loaded on every page. */
+
+/* smooth grow + shrink; `scale` is its own property so it never fights existing transforms */
+button, [role="button"], input[type="button"], input[type="submit"], input[type="reset"], select, summary,
+.tool-btn, .nl-nav, .nb, .navbtn, .tool, .send,
+.hub-card, .nl-flip, #nlHomeClockCard, #nlHomeTitleCard, .family-card, .model-detail-card,
+.usage-card, .usage-item, .chat-entry, .msg, .message, .user, .nl-pill {
+  transition: scale .18s cubic-bezier(.34, 1.56, .64, 1), background-color .15s ease, background .15s ease,
+              color .15s ease, border-color .15s ease, box-shadow .15s ease, transform .15s ease, opacity .15s ease !important;
+}
+
+@media (hover: hover) and (prefers-reduced-motion: no-preference) {
+  /* buttons */
+  button:not(:disabled):hover, [role="button"]:hover, input[type="button"]:hover, input[type="submit"]:hover,
+  input[type="reset"]:hover, select:hover, summary:hover,
+  .tool-btn:not(:disabled):hover, .nb:hover, .navbtn:hover, .tool:not(:disabled):hover, .send:not(:disabled):hover {
+    scale: 1.08;
+  }
+  /* wide sidebar links grow a little less so they stay inside the sidebar */
+  .nl-nav:hover { scale: 1.04; }
+
+  /* cards (chat + AI messages included) */
+  .hub-card:hover, .nl-flip:hover, #nlHomeClockCard:hover, #nlHomeTitleCard:hover,
+  .family-card:hover, .model-detail-card:not(:disabled):hover, .usage-card:hover, .usage-item:hover,
+  .chat-entry:hover, .user:hover, .nl-pill:hover {
+    scale: 1.04;
+  }
+  .msg:hover, .message:hover { scale: 1.025; }
+  .hub-card:hover { scale: 1.06; }
+}
